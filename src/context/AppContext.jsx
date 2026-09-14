@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useReducer, useRef } from 'react'
 
-const DEFAULT_API_URL = 'http://localhost:5000'
+const DEFAULT_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000'
 export const REQUEST_TIMEOUT_MS = { python: 15000, cpp: 25000 }
 export const FILE_EXT = { python: 'main.py', cpp: 'main.cpp' }
 
