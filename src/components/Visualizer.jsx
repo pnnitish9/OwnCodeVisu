@@ -68,7 +68,7 @@ function detectListRole(varName, heapObj) {
 
 /**
  * Detect graph: a dict whose values are lists of nodes.
- * Returns the adjacency map { node: [neighbor, ...] } or null.
+ * Returns { adj: adjacency map, excludeIds: Set of heap IDs to exclude from heap section } or null.
  */
 function detectGraph(heapState, locals) {
   // Look for a dict variable — adjacency list
@@ -85,16 +85,21 @@ function detectGraph(heapState, locals) {
       return false
     })
     if (allListVals && heapObj.entries.length >= 2) {
-      // Build adjacency map
+      // Build adjacency map and collect all related heap IDs
       const adj = {}
+      const excludeIds = new Set([String(val.heap_ref)]) // Exclude the dict itself
+      
       for (const e of heapObj.entries) {
         const key = e.key?.replace(/['"]/g, '')
-        const inner = heapState[String(e.value?.heap_id)]
+        const listHeapId = String(e.value?.heap_id)
+        excludeIds.add(listHeapId) // Exclude the adjacency lists
+        
+        const inner = heapState[listHeapId]
         adj[key] = (inner?.elements || [])
           .filter(el => el.type === 'value')
           .map(el => String(el.value ?? '').replace(/['"]/g, ''))
       }
-      return adj
+      return { adj, excludeIds }
     }
   }
   return null
@@ -836,56 +841,8 @@ function HeapSection({ heapState, prevHeapState, featuredIds, locals, onHeapClic
     )
   }
 
-  // Graph?
-  const adj = detectGraph(heapState, locals)
-  if (adj) {
-    return (
-      <Section icon={BarChart2} title="Graph Visualization">
-        <GraphViz adj={adj} locals={locals} />
-      </Section>
-    )
-  }
-
-  // Generic heap objects
-  return (
-    <Section icon={Grid3x3} title="Heap / Memory">
-      <div className="heap-section">
-        {Object.entries(remaining).map(([id, obj]) => {
-          const prevObj = prevHeapState?.[id]
-          return (
-            <div className="heap-obj-wrap" key={id} id={`heap-obj-${id}`}>
-              <div className="heap-obj-header">
-                <Grid3x3 size={11} />
-                H{id} · {obj.label || obj.type}
-                {obj.truncated && ' (truncated)'}
-              </div>
-              <div className="heap-obj-body">
-                {(obj.type === 'list' || obj.type === 'tuple') &&
-                  <ArrayViz heapObj={obj} varName="" locals={locals} prevHeapObj={prevObj} onHeapClick={onHeapClick} />}
-                {obj.type === 'dict'   && <DictViz heapObj={obj} onHeapClick={onHeapClick} />}
-                {obj.type === 'object' && <ObjectViz heapObj={obj} onHeapClick={onHeapClick} />}
-                {(obj.type === 'set' || obj.type === 'frozenset') && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {(obj.elements || []).map((e, i) => (
-                      <span key={i} style={{
-                        background: 'var(--bg-card)', border: '1px solid var(--border)',
-                        borderRadius: 5, padding: '3px 8px',
-                        fontFamily: 'var(--font-mono)', fontSize: 12,
-                      }}>
-                        {e.type === 'ref' ? `→H${e.heap_id}` : String(e.value ?? '')}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {obj.value != null &&
-                  <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{String(obj.value)}</code>}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </Section>
-  )
+  // NO generic heap display - only show specific data structures
+  return null
 }
 
 /* ================================================================
@@ -914,21 +871,19 @@ export default function Visualizer({ onHeapClick }) {
   const locals        = step.stack_locals || {}
 
   // ---- Detect graph first (uses dict + heap) -------------------------
-  const graphAdj = detectGraph(heapState, locals)
+  const graphResult = detectGraph(heapState, locals)
+  const graphAdj = graphResult?.adj || null
+  const graphExcludeIds = graphResult?.excludeIds || new Set()
 
   // ---- Find list/tuple variables to feature as smart diagrams --------
   const listVars = Object.entries(locals).filter(([name, val]) => {
     if (name.startsWith('__')) return false
     return (val?.type === 'list' || val?.type === 'tuple') && val.heap_ref != null
   })
-  const featuredIds = new Set(listVars.map(([, v]) => String(v.heap_ref)))
-
-  // Also exclude graph dict from heap section
-  if (graphAdj) {
-    for (const [, val] of Object.entries(locals)) {
-      if (val?.type === 'dict' && val.heap_ref != null) featuredIds.add(String(val.heap_ref))
-    }
-  }
+  const featuredIds = new Set([
+    ...listVars.map(([, v]) => String(v.heap_ref)),
+    ...graphExcludeIds  // Exclude all graph-related heap objects
+  ])
 
   return (
     <div className="viz-grid">
