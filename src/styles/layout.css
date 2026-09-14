@@ -1,0 +1,88 @@
+/* ============================== HEADER ============================== */
+.header {
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 30;
+    flex-shrink: 0;
+    gap: 12px;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 16px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.logo i { color: var(--accent); width: 20px; height: 20px; }
+
+.header-center {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+    flex: 1;
+    justify-content: center;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+/* ============================== MAIN LAYOUT ============================== */
+.main {
+    display: flex;
+    flex: 1;
+    gap: 14px;
+    padding: 14px;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.left-panel {
+    width: 50%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 360px;
+}
+
+.right-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 380px;
+    min-height: 0;
+}
+
+/* ============================== RESPONSIVE ============================== */
+@media (max-width: 900px) {
+    .main {
+        flex-direction: column;
+        overflow-y: auto;
+    }
+
+    .left-panel,
+    .right-panel {
+        width: 100%;
+        min-width: 0;
+    }
+}

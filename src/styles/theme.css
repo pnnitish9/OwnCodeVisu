@@ -1,0 +1,125 @@
+/* ============================== THEME VARIABLES ============================== */
+:root, [data-theme="dark"] {
+    --bg-primary: #0B1120;
+    --bg-card: #111827;
+    --bg-card-hover: #1a2332;
+    --bg-editor: #0d1520;
+    --bg-console: #000000;
+
+    --accent: #3B82F6;
+    --accent-hover: #2563EB;
+    --accent-soft: rgba(59, 130, 246, 0.12);
+
+    --success: #22C55E;
+    --success-bg: rgba(34, 197, 94, 0.15);
+    --error: #EF4444;
+    --error-bg: rgba(239, 68, 68, 0.15);
+    --warning: #F59E0B;
+    --warning-bg: rgba(245, 158, 11, 0.15);
+    --purple: #A855F7;
+    --purple-bg: rgba(168, 85, 247, 0.15);
+
+    --text-primary: #F9FAFB;
+    --text-secondary: #94A3B8;
+    --text-muted: #64748B;
+
+    --border: rgba(255, 255, 255, 0.08);
+    --border-light: rgba(255, 255, 255, 0.14);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+
+    --radius-sm: 8px;
+    --radius: 12px;
+    --radius-lg: 16px;
+
+    --transition: 200ms ease;
+    --font-ui: 'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+[data-theme="light"] {
+    --bg-primary: #F3F4F6;
+    --bg-card: #FFFFFF;
+    --bg-card-hover: #F1F5F9;
+    --bg-editor: #FBFCFE;
+    --bg-console: #0d1117;
+
+    --accent: #2563EB;
+    --accent-hover: #1D4ED8;
+    --accent-soft: rgba(37, 99, 235, 0.10);
+
+    --success: #16A34A;
+    --success-bg: rgba(22, 163, 74, 0.12);
+    --error: #DC2626;
+    --error-bg: rgba(220, 38, 38, 0.10);
+    --warning: #D97706;
+    --warning-bg: rgba(217, 119, 6, 0.12);
+    --purple: #9333EA;
+    --purple-bg: rgba(147, 51, 234, 0.10);
+
+    --text-primary: #0F172A;
+    --text-secondary: #475569;
+    --text-muted: #94A3B8;
+
+    --border: rgba(15, 23, 42, 0.09);
+    --border-light: rgba(15, 23, 42, 0.16);
+
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+    --shadow-md: 0 4px 6px rgba(15, 23, 42, 0.08);
+    --shadow-lg: 0 10px 20px rgba(15, 23, 42, 0.12);
+}
+
+/* ============================== BASE RESET ============================== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: background var(--transition), color var(--transition);
+}
+
+button, input, select {
+    font-family: inherit;
+}
+
+::selection {
+    background: var(--accent-soft);
+}
+
+/* ============================== SCROLLBAR ============================== */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ============================== KEYFRAMES ============================== */
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .45; }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes arrowSlide {
+    from { transform: translateX(-3px); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+}
