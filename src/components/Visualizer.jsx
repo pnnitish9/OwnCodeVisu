@@ -18,6 +18,65 @@ function fmt(val) {
   return String(val.display ?? val.value ?? JSON.stringify(val))
 }
 
+/**
+ * Detect if a heap object is a 2D matrix (list of lists with uniform dimensions)
+ */
+function is2DMatrix(heapObj, heapState) {
+  if (heapObj.type !== 'list' && heapObj.type !== 'tuple') return false
+  const elements = heapObj.elements || []
+  if (elements.length === 0) return false
+  
+  // Check if all elements are refs to lists
+  const rowRefs = elements.filter(el => el.type === 'ref')
+  if (rowRefs.length === 0 || rowRefs.length !== elements.length) return false
+  
+  // Get all row objects
+  const rows = rowRefs.map(ref => heapState[String(ref.heap_id)]).filter(Boolean)
+  if (rows.length !== rowRefs.length) return false
+  
+  // Check if all are lists/tuples
+  if (!rows.every(row => row.type === 'list' || row.type === 'tuple')) return false
+  
+  // Check uniform column count (at least 2 rows needed)
+  if (rows.length < 2) return false
+  const colCount = (rows[0].elements || []).length
+  if (colCount === 0) return false
+  
+  return rows.every(row => (row.elements || []).length === colCount)
+}
+
+/**
+ * Detect if a heap object is a 3D matrix (list of 2D matrices)
+ */
+function is3DMatrix(heapObj, heapState) {
+  if (heapObj.type !== 'list' && heapObj.type !== 'tuple') return false
+  const elements = heapObj.elements || []
+  if (elements.length === 0) return false
+  
+  // Check if all elements are refs to 2D matrices
+  const matrixRefs = elements.filter(el => el.type === 'ref')
+  if (matrixRefs.length === 0 || matrixRefs.length !== elements.length) return false
+  
+  const matrices = matrixRefs.map(ref => heapState[String(ref.heap_id)]).filter(Boolean)
+  if (matrices.length !== matrixRefs.length || matrices.length < 2) return false
+  
+  // Check if all are 2D matrices with same dimensions
+  if (!matrices.every(m => is2DMatrix(m, heapState))) return false
+  
+  const firstMatrix = matrices[0]
+  const firstRow = heapState[String(firstMatrix.elements[0].heap_id)]
+  const rows = firstMatrix.elements.length
+  const cols = (firstRow?.elements || []).length
+  
+  return matrices.every(m => {
+    if (m.elements.length !== rows) return false
+    return m.elements.every(rowRef => {
+      const row = heapState[String(rowRef.heap_id)]
+      return (row?.elements || []).length === cols
+    })
+  })
+}
+
 /* ================================================================
    STRUCTURE DETECTION
    Analyses variables + heap to decide how to render each structure.
@@ -400,6 +459,168 @@ function QueueViz({ heapObj }) {
         )
       })}
       <div className="queue-end-label">← BACK</div>
+    </div>
+  )
+}
+
+/* ================================================================
+   2D MATRIX VIZ  (grid layout with row/col indices)
+   ================================================================ */
+function Matrix2DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
+  const elements = heapObj.elements || []
+  const rows = elements.map(el => heapState[String(el.heap_id)]).filter(Boolean)
+  
+  if (rows.length === 0) return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>empty matrix</div>
+  
+  const numRows = rows.length
+  const numCols = (rows[0]?.elements || []).length
+  
+  // Detect changed cells
+  const prevRows = prevHeapState 
+    ? elements.map(el => prevHeapState[String(el.heap_id)]).filter(Boolean)
+    : []
+  
+  const changedCells = new Set()
+  if (prevRows.length === numRows) {
+    for (let i = 0; i < numRows; i++) {
+      const row = rows[i].elements || []
+      const prevRow = prevRows[i]?.elements || []
+      if (prevRow.length === row.length) {
+        for (let j = 0; j < row.length; j++) {
+          if (String(row[j]?.value ?? '') !== String(prevRow[j]?.value ?? '')) {
+            changedCells.add(`${i},${j}`)
+          }
+        }
+      }
+    }
+  }
+  
+  return (
+    <div className="matrix-2d-viz">
+      {/* Column headers */}
+      <div className="matrix-2d-grid" style={{ 
+        gridTemplateColumns: `40px repeat(${numCols}, 1fr)`,
+        gap: '4px'
+      }}>
+        <div className="matrix-header-cell"></div>
+        {Array.from({ length: numCols }, (_, j) => (
+          <div key={`col-${j}`} className="matrix-header-cell">{j}</div>
+        ))}
+        
+        {/* Rows with data */}
+        {rows.map((row, i) => {
+          const rowElements = row.elements || []
+          return (
+            <React.Fragment key={`row-${i}`}>
+              {/* Row header */}
+              <div className="matrix-header-cell">{i}</div>
+              
+              {/* Row cells */}
+              {rowElements.map((el, j) => {
+                const isRef = el.type === 'ref'
+                const isTrunc = el.type === 'truncated'
+                const val = isTrunc ? '…' : isRef ? `→${el.heap_id}` : String(el.value ?? '')
+                const isChanged = changedCells.has(`${i},${j}`)
+                
+                return (
+                  <div
+                    key={`cell-${i}-${j}`}
+                    className={`matrix-cell ${isChanged ? 'changed' : ''} ${isRef ? 'ref' : ''}`}
+                    onClick={isRef ? () => onHeapClick(el.heap_id) : undefined}
+                    style={isRef ? { cursor: 'pointer' } : {}}
+                  >
+                    {val}
+                  </div>
+                )
+              })}
+            </React.Fragment>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/* ================================================================
+   3D MATRIX VIZ  (multiple 2D grids stacked)
+   ================================================================ */
+function Matrix3DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
+  const elements = heapObj.elements || []
+  const matrices = elements.map(el => heapState[String(el.heap_id)]).filter(Boolean)
+  
+  if (matrices.length === 0) return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>empty 3D matrix</div>
+  
+  return (
+    <div className="matrix-3d-viz">
+      {matrices.map((matrix, depth) => {
+        const rows = (matrix.elements || []).map(el => heapState[String(el.heap_id)]).filter(Boolean)
+        const numRows = rows.length
+        const numCols = rows[0] ? (rows[0].elements || []).length : 0
+        
+        // Get previous matrix for change detection
+        const prevMatrix = prevHeapState ? prevHeapState[String(elements[depth].heap_id)] : null
+        const prevRows = prevMatrix 
+          ? (prevMatrix.elements || []).map(el => prevHeapState[String(el.heap_id)]).filter(Boolean)
+          : []
+        
+        const changedCells = new Set()
+        if (prevRows.length === numRows) {
+          for (let i = 0; i < numRows; i++) {
+            const row = rows[i].elements || []
+            const prevRow = prevRows[i]?.elements || []
+            if (prevRow.length === row.length) {
+              for (let j = 0; j < row.length; j++) {
+                if (String(row[j]?.value ?? '') !== String(prevRow[j]?.value ?? '')) {
+                  changedCells.add(`${i},${j}`)
+                }
+              }
+            }
+          }
+        }
+        
+        return (
+          <div key={`matrix-${depth}`} className="matrix-3d-layer">
+            <div className="matrix-3d-label">Layer {depth}</div>
+            <div className="matrix-2d-grid" style={{ 
+              gridTemplateColumns: `40px repeat(${numCols}, 1fr)`,
+              gap: '4px'
+            }}>
+              {/* Column headers */}
+              <div className="matrix-header-cell"></div>
+              {Array.from({ length: numCols }, (_, j) => (
+                <div key={`col-${j}`} className="matrix-header-cell">{j}</div>
+              ))}
+              
+              {/* Rows with data */}
+              {rows.map((row, i) => {
+                const rowElements = row.elements || []
+                return (
+                  <React.Fragment key={`row-${i}`}>
+                    <div className="matrix-header-cell">{i}</div>
+                    {rowElements.map((el, j) => {
+                      const isRef = el.type === 'ref'
+                      const isTrunc = el.type === 'truncated'
+                      const val = isTrunc ? '…' : isRef ? `→${el.heap_id}` : String(el.value ?? '')
+                      const isChanged = changedCells.has(`${i},${j}`)
+                      
+                      return (
+                        <div
+                          key={`cell-${i}-${j}`}
+                          className={`matrix-cell ${isChanged ? 'changed' : ''} ${isRef ? 'ref' : ''}`}
+                          onClick={isRef ? () => onHeapClick(el.heap_id) : undefined}
+                          style={isRef ? { cursor: 'pointer' } : {}}
+                        >
+                          {val}
+                        </div>
+                      )
+                    })}
+                  </React.Fragment>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -897,13 +1118,40 @@ export default function Visualizer({ onHeapClick }) {
         </Section>
       )}
 
-      {/* Smart array / stack / queue diagrams */}
+      {/* Smart array / stack / queue / matrix diagrams */}
       {listVars.map(([name, val]) => {
         const heapId  = String(val.heap_ref)
         const heapObj = heapState[heapId]
         if (!heapObj?.elements) return null
         const prevObj = prevHeapState[heapId]
         const role    = detectListRole(name, heapObj)
+
+        // Check if it's a 3D matrix first, then 2D, then regular array
+        if (is3DMatrix(heapObj, heapState)) {
+          return (
+            <Section key={name} icon={Grid3x3} title={`3D Matrix — ${name}`}>
+              <Matrix3DViz
+                heapObj={heapObj}
+                heapState={heapState}
+                prevHeapState={prevHeapState}
+                onHeapClick={onHeapClick}
+              />
+            </Section>
+          )
+        }
+        
+        if (is2DMatrix(heapObj, heapState)) {
+          return (
+            <Section key={name} icon={Grid3x3} title={`2D Matrix — ${name}`}>
+              <Matrix2DViz
+                heapObj={heapObj}
+                heapState={heapState}
+                prevHeapState={prevHeapState}
+                onHeapClick={onHeapClick}
+              />
+            </Section>
+          )
+        }
 
         if (role === 'stack') {
           return (

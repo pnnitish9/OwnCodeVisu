@@ -645,3 +645,129 @@
 }
 
 .heap-obj-body { padding: 8px 10px; }
+
+/* ---- 2D Matrix Visualization ---------------------------------------- */
+.matrix-2d-viz {
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 8px;
+}
+
+.matrix-2d-grid {
+    display: grid;
+    gap: 4px;
+    align-items: center;
+    justify-items: stretch;
+    width: fit-content;
+    margin: 0 auto;
+}
+
+.matrix-header-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: var(--bg-primary);
+    border-radius: 4px;
+    min-width: 32px;
+    text-align: center;
+}
+
+.matrix-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    min-width: 52px;
+    min-height: 52px;
+    border: 2px solid var(--border-light);
+    border-radius: 7px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-editor);
+    transition: background 200ms, border-color 200ms, transform 200ms, box-shadow 200ms;
+    user-select: none;
+}
+
+.matrix-cell.changed {
+    animation: matrix-cell-change 400ms ease;
+    background: var(--warning-bg);
+    border-color: var(--warning);
+    color: var(--warning);
+}
+
+.matrix-cell.ref {
+    background: var(--purple-bg);
+    border-color: var(--purple);
+    color: var(--purple);
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.matrix-cell.ref:hover {
+    background: var(--purple);
+    color: #fff;
+}
+
+@keyframes matrix-cell-change {
+    0%   { transform: scale(1.15); box-shadow: 0 0 0 3px var(--warning-bg); }
+    60%  { transform: scale(0.92); }
+    100% { transform: scale(1); }
+}
+
+/* ---- 3D Matrix Visualization ---------------------------------------- */
+.matrix-3d-viz {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-x: auto;
+    padding: 8px;
+}
+
+.matrix-3d-layer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    animation: layer-appear 400ms ease;
+}
+
+.matrix-3d-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 4px 8px;
+    background: var(--accent-soft);
+    border-radius: 4px;
+    width: fit-content;
+    margin: 0 auto;
+}
+
+@keyframes layer-appear {
+    0%   { opacity: 0; transform: translateY(10px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive adjustments for matrices */
+@media (max-width: 768px) {
+    .matrix-cell {
+        min-width: 44px;
+        min-height: 44px;
+        padding: 8px;
+        font-size: 12px;
+    }
+    
+    .matrix-header-cell {
+        min-width: 28px;
+        padding: 4px;
+        font-size: 9px;
+    }
+}
