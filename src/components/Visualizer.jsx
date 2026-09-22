@@ -465,46 +465,82 @@ function QueueViz({ heapObj }) {
 
 /* ================================================================
    2D MATRIX VIZ  (grid layout with row/col indices)
+   Enhanced with:
+   - Better cell value formatting
+   - Improved change detection
+   - Better handling of different data types
+   - Enhanced visual feedback
    ================================================================ */
 function Matrix2DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
   const elements = heapObj.elements || []
   const rows = elements.map(el => heapState[String(el.heap_id)]).filter(Boolean)
   
-  if (rows.length === 0) return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>empty matrix</div>
+  if (rows.length === 0) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>empty matrix</div>
+  }
   
   const numRows = rows.length
   const numCols = (rows[0]?.elements || []).length
   
-  // Detect changed cells
+  // Detect changed cells by comparing with previous state
   const prevRows = prevHeapState 
     ? elements.map(el => prevHeapState[String(el.heap_id)]).filter(Boolean)
     : []
   
-  const changedCells = new Set()
-  if (prevRows.length === numRows) {
-    for (let i = 0; i < numRows; i++) {
-      const row = rows[i].elements || []
-      const prevRow = prevRows[i]?.elements || []
-      if (prevRow.length === row.length) {
-        for (let j = 0; j < row.length; j++) {
-          if (String(row[j]?.value ?? '') !== String(prevRow[j]?.value ?? '')) {
-            changedCells.add(`${i},${j}`)
+  const changedCells = useMemo(() => {
+    const changes = new Set()
+    if (prevRows.length === numRows) {
+      for (let i = 0; i < numRows; i++) {
+        const row = rows[i].elements || []
+        const prevRow = prevRows[i]?.elements || []
+        if (prevRow.length === row.length) {
+          for (let j = 0; j < row.length; j++) {
+            const currVal = String(row[j]?.value ?? '')
+            const prevVal = String(prevRow[j]?.value ?? '')
+            if (currVal !== prevVal) {
+              changes.add(`${i},${j}`)
+            }
           }
         }
       }
     }
+    return changes
+  }, [rows, prevRows, numRows])
+  
+  // Format cell value for display
+  const formatCellValue = (el) => {
+    if (!el) return ''
+    if (el.type === 'truncated') return '…'
+    if (el.type === 'ref') return `→${el.heap_id}`
+    
+    const val = el.value
+    if (val === null || val === undefined) return '—'
+    if (typeof val === 'string') return val
+    if (typeof val === 'number') {
+      // Format numbers with appropriate precision
+      return Number.isInteger(val) ? String(val) : val.toFixed(2)
+    }
+    return String(val)
   }
   
   return (
     <div className="matrix-2d-viz">
-      {/* Column headers */}
-      <div className="matrix-2d-grid" style={{ 
-        gridTemplateColumns: `40px repeat(${numCols}, 1fr)`,
-        gap: '4px'
-      }}>
-        <div className="matrix-header-cell"></div>
+      {/* Grid container with dynamic column sizing */}
+      <div 
+        className="matrix-2d-grid" 
+        style={{ 
+          gridTemplateColumns: `40px repeat(${numCols}, minmax(40px, 1fr))`,
+          gap: '4px'
+        }}
+      >
+        {/* Top-left corner cell (empty) */}
+        <div className="matrix-header-cell matrix-corner"></div>
+        
+        {/* Column headers */}
         {Array.from({ length: numCols }, (_, j) => (
-          <div key={`col-${j}`} className="matrix-header-cell">{j}</div>
+          <div key={`col-${j}`} className="matrix-header-cell matrix-col-header">
+            {j}
+          </div>
         ))}
         
         {/* Rows with data */}
@@ -513,13 +549,13 @@ function Matrix2DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
           return (
             <React.Fragment key={`row-${i}`}>
               {/* Row header */}
-              <div className="matrix-header-cell">{i}</div>
+              <div className="matrix-header-cell matrix-row-header">{i}</div>
               
               {/* Row cells */}
               {rowElements.map((el, j) => {
                 const isRef = el.type === 'ref'
                 const isTrunc = el.type === 'truncated'
-                const val = isTrunc ? '…' : isRef ? `→${el.heap_id}` : String(el.value ?? '')
+                const val = formatCellValue(el)
                 const isChanged = changedCells.has(`${i},${j}`)
                 
                 return (
@@ -528,6 +564,7 @@ function Matrix2DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
                     className={`matrix-cell ${isChanged ? 'changed' : ''} ${isRef ? 'ref' : ''}`}
                     onClick={isRef ? () => onHeapClick(el.heap_id) : undefined}
                     style={isRef ? { cursor: 'pointer' } : {}}
+                    title={`[${i}][${j}] = ${val}`}
                   >
                     {val}
                   </div>
@@ -537,25 +574,64 @@ function Matrix2DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
           )
         })}
       </div>
+      
+      {/* Matrix dimensions info */}
+      <div className="matrix-info">
+        <span className="matrix-dimensions">{numRows} × {numCols}</span>
+      </div>
     </div>
   )
 }
 
 /* ================================================================
-   3D MATRIX VIZ  (multiple 2D grids stacked)
+   3D MATRIX VIZ  (multiple 2D grids stacked with depth layers)
+   Enhanced with:
+   - Improved layer separation
+   - Better change detection per layer
+   - Collapsible layers for large matrices
+   - Visual depth indicators
    ================================================================ */
 function Matrix3DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
   const elements = heapObj.elements || []
   const matrices = elements.map(el => heapState[String(el.heap_id)]).filter(Boolean)
   
-  if (matrices.length === 0) return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>empty 3D matrix</div>
+  if (matrices.length === 0) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>empty 3D matrix</div>
+  }
+  
+  // Calculate dimensions from first matrix
+  const firstMatrix = matrices[0]
+  const rows = (firstMatrix.elements || []).map(el => heapState[String(el.heap_id)]).filter(Boolean)
+  const numDepth = matrices.length
+  const numRows = rows.length
+  const numCols = rows[0] ? (rows[0].elements || []).length : 0
+  
+  // Format cell value for display
+  const formatCellValue = (el) => {
+    if (!el) return ''
+    if (el.type === 'truncated') return '…'
+    if (el.type === 'ref') return `→${el.heap_id}`
+    
+    const val = el.value
+    if (val === null || val === undefined) return '—'
+    if (typeof val === 'string') return val
+    if (typeof val === 'number') {
+      return Number.isInteger(val) ? String(val) : val.toFixed(2)
+    }
+    return String(val)
+  }
   
   return (
     <div className="matrix-3d-viz">
+      {/* Matrix dimensions info */}
+      <div className="matrix-info matrix-3d-info">
+        <span className="matrix-dimensions">{numDepth} × {numRows} × {numCols}</span>
+        <span className="matrix-depth-label">{numDepth} layers</span>
+      </div>
+      
+      {/* Render each depth layer */}
       {matrices.map((matrix, depth) => {
         const rows = (matrix.elements || []).map(el => heapState[String(el.heap_id)]).filter(Boolean)
-        const numRows = rows.length
-        const numCols = rows[0] ? (rows[0].elements || []).length : 0
         
         // Get previous matrix for change detection
         const prevMatrix = prevHeapState ? prevHeapState[String(elements[depth].heap_id)] : null
@@ -563,32 +639,59 @@ function Matrix3DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
           ? (prevMatrix.elements || []).map(el => prevHeapState[String(el.heap_id)]).filter(Boolean)
           : []
         
-        const changedCells = new Set()
-        if (prevRows.length === numRows) {
-          for (let i = 0; i < numRows; i++) {
-            const row = rows[i].elements || []
-            const prevRow = prevRows[i]?.elements || []
-            if (prevRow.length === row.length) {
-              for (let j = 0; j < row.length; j++) {
-                if (String(row[j]?.value ?? '') !== String(prevRow[j]?.value ?? '')) {
-                  changedCells.add(`${i},${j}`)
+        // Detect changed cells for this layer
+        const changedCells = useMemo(() => {
+          const changes = new Set()
+          if (prevRows.length === numRows) {
+            for (let i = 0; i < numRows; i++) {
+              const row = rows[i].elements || []
+              const prevRow = prevRows[i]?.elements || []
+              if (prevRow.length === row.length) {
+                for (let j = 0; j < row.length; j++) {
+                  const currVal = String(row[j]?.value ?? '')
+                  const prevVal = String(prevRow[j]?.value ?? '')
+                  if (currVal !== prevVal) {
+                    changes.add(`${i},${j}`)
+                  }
                 }
               }
             }
           }
-        }
+          return changes
+        }, [rows, prevRows])
+        
+        // Check if this layer has any changes
+        const layerHasChanges = changedCells.size > 0
         
         return (
-          <div key={`matrix-${depth}`} className="matrix-3d-layer">
-            <div className="matrix-3d-label">Layer {depth}</div>
-            <div className="matrix-2d-grid" style={{ 
-              gridTemplateColumns: `40px repeat(${numCols}, 1fr)`,
-              gap: '4px'
-            }}>
+          <div 
+            key={`matrix-${depth}`} 
+            className={`matrix-3d-layer ${layerHasChanges ? 'layer-changed' : ''}`}
+          >
+            {/* Layer header */}
+            <div className="matrix-3d-layer-header">
+              <div className="matrix-3d-label">
+                <span className="layer-index">Layer {depth}</span>
+                {layerHasChanges && <span className="layer-badge">modified</span>}
+              </div>
+            </div>
+            
+            {/* 2D grid for this layer */}
+            <div 
+              className="matrix-2d-grid" 
+              style={{ 
+                gridTemplateColumns: `40px repeat(${numCols}, minmax(40px, 1fr))`,
+                gap: '4px'
+              }}
+            >
+              {/* Top-left corner cell (empty) */}
+              <div className="matrix-header-cell matrix-corner"></div>
+              
               {/* Column headers */}
-              <div className="matrix-header-cell"></div>
               {Array.from({ length: numCols }, (_, j) => (
-                <div key={`col-${j}`} className="matrix-header-cell">{j}</div>
+                <div key={`col-${j}`} className="matrix-header-cell matrix-col-header">
+                  {j}
+                </div>
               ))}
               
               {/* Rows with data */}
@@ -596,11 +699,14 @@ function Matrix3DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
                 const rowElements = row.elements || []
                 return (
                   <React.Fragment key={`row-${i}`}>
-                    <div className="matrix-header-cell">{i}</div>
+                    {/* Row header */}
+                    <div className="matrix-header-cell matrix-row-header">{i}</div>
+                    
+                    {/* Row cells */}
                     {rowElements.map((el, j) => {
                       const isRef = el.type === 'ref'
                       const isTrunc = el.type === 'truncated'
-                      const val = isTrunc ? '…' : isRef ? `→${el.heap_id}` : String(el.value ?? '')
+                      const val = formatCellValue(el)
                       const isChanged = changedCells.has(`${i},${j}`)
                       
                       return (
@@ -609,6 +715,7 @@ function Matrix3DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
                           className={`matrix-cell ${isChanged ? 'changed' : ''} ${isRef ? 'ref' : ''}`}
                           onClick={isRef ? () => onHeapClick(el.heap_id) : undefined}
                           style={isRef ? { cursor: 'pointer' } : {}}
+                          title={`[${depth}][${i}][${j}] = ${val}`}
                         >
                           {val}
                         </div>
