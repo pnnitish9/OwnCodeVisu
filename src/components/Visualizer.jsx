@@ -37,11 +37,11 @@ function is2DMatrix(heapObj, heapState) {
   // Check if all are lists/tuples
   if (!rows.every(row => row.type === 'list' || row.type === 'tuple')) return false
   
-  // Check uniform column count (at least 2 rows needed)
-  if (rows.length < 2) return false
+  // Check uniform column count (allow single row for initialization)
   const colCount = (rows[0].elements || []).length
   if (colCount === 0) return false
   
+  // All rows must have same column count
   return rows.every(row => (row.elements || []).length === colCount)
 }
 
@@ -1101,9 +1101,50 @@ export default function Visualizer({ onHeapClick }) {
     if (name.startsWith('__')) return false
     return (val?.type === 'list' || val?.type === 'tuple') && val.heap_ref != null
   })
+  
+  // Collect IDs to exclude from individual display
+  const matrixRowIds = new Set()
+  for (const [, val] of listVars) {
+    const heapId = String(val.heap_ref)
+    const heapObj = heapState[heapId]
+    if (!heapObj?.elements) continue
+    
+    // If it's a 2D or 3D matrix, exclude all row/sub-matrix IDs
+    if (is2DMatrix(heapObj, heapState)) {
+      const elements = heapObj.elements || []
+      elements.forEach(el => {
+        if (el.type === 'ref') {
+          matrixRowIds.add(String(el.heap_id))
+        }
+      })
+    } else if (is3DMatrix(heapObj, heapState)) {
+      const elements = heapObj.elements || []
+      elements.forEach(el => {
+        if (el.type === 'ref') {
+          const matrixHeapId = String(el.heap_id)
+          matrixRowIds.add(matrixHeapId)
+          const matrix = heapState[matrixHeapId]
+          if (matrix?.elements) {
+            matrix.elements.forEach(rowEl => {
+              if (rowEl.type === 'ref') {
+                matrixRowIds.add(String(rowEl.heap_id))
+              }
+            })
+          }
+        }
+      })
+    }
+  }
+  
+  // Filter out matrix row variables from being displayed separately
+  const filteredListVars = listVars.filter(([, val]) => {
+    return !matrixRowIds.has(String(val.heap_ref))
+  })
+  
   const featuredIds = new Set([
     ...listVars.map(([, v]) => String(v.heap_ref)),
-    ...graphExcludeIds  // Exclude all graph-related heap objects
+    ...graphExcludeIds,  // Exclude all graph-related heap objects
+    ...matrixRowIds      // Exclude matrix row arrays
   ])
 
   return (
@@ -1119,7 +1160,7 @@ export default function Visualizer({ onHeapClick }) {
       )}
 
       {/* Smart array / stack / queue / matrix diagrams */}
-      {listVars.map(([name, val]) => {
+      {filteredListVars.map(([name, val]) => {
         const heapId  = String(val.heap_ref)
         const heapObj = heapState[heapId]
         if (!heapObj?.elements) return null
