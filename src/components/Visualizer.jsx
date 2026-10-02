@@ -1275,7 +1275,12 @@ export default function Visualizer({ onHeapClick }) {
         const role    = detectListRole(name, heapObj)
 
         // Check if it's a 3D matrix first, then 2D, then regular array
-        if (is3DMatrix(heapObj, heapState)) {
+        const is3D = is3DMatrix(heapObj, heapState)
+        const is2D = is2DMatrix(heapObj, heapState)
+        
+        console.log(`Variable "${name}":`, { is2D, is3D, heapObj })
+        
+        if (is3D) {
           return (
             <Section key={name} icon={Grid3x3} title={`3D Matrix — ${name}`}>
               <Matrix3DViz
@@ -1288,7 +1293,7 @@ export default function Visualizer({ onHeapClick }) {
           )
         }
         
-        if (is2DMatrix(heapObj, heapState)) {
+        if (is2D) {
           return (
             <Section key={name} icon={Grid3x3} title={`2D Matrix — ${name}`}>
               <Matrix2DViz
