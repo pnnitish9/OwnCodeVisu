@@ -650,91 +650,125 @@
 .matrix-2d-viz {
     overflow-x: auto;
     overflow-y: visible;
-    padding: 8px;
-}
-
-.matrix-2d-grid {
-    display: grid;
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
     gap: 4px;
-    align-items: center;
-    justify-items: stretch;
     width: fit-content;
     margin: 0 auto;
 }
 
-.matrix-header-cell {
+/* Header row with column indices */
+.matrix-header-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.matrix-corner-space {
+    min-width: 36px;
+    flex-shrink: 0;
+}
+
+.matrix-col-header {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 6px;
+    min-width: 54px;
+    min-height: 24px;
+    padding: 4px 8px;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     color: var(--text-muted);
-    background: var(--bg-primary);
-    border-radius: 4px;
-    min-width: 32px;
-    text-align: center;
-}
-
-.matrix-header-cell.matrix-corner {
     background: transparent;
+    flex-shrink: 0;
 }
 
-.matrix-header-cell.matrix-col-header {
-    background: var(--accent-soft);
-    color: var(--accent);
+/* Data row with row header and cells */
+.matrix-data-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
 }
 
-.matrix-header-cell.matrix-row-header {
-    background: var(--success-bg);
-    color: var(--success);
+.matrix-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    min-height: 54px;
+    padding: 4px 8px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: transparent;
+    flex-shrink: 0;
+}
+
+.matrix-cells-row {
+    display: flex;
+    gap: 4px;
 }
 
 .matrix-cell {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 10px;
-    min-width: 52px;
-    min-height: 52px;
-    border: 2px solid var(--border-light);
-    border-radius: 7px;
+    padding: 12px;
+    min-width: 54px;
+    min-height: 54px;
+    border: 2px solid rgba(168, 85, 247, 0.4);
+    border-radius: 8px;
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
-    color: var(--text-primary);
-    background: var(--bg-editor);
-    transition: background 200ms, border-color 200ms, transform 200ms, box-shadow 200ms;
+    color: #fff;
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.85), rgba(139, 92, 246, 0.75));
+    transition: all 200ms ease;
     user-select: none;
     position: relative;
     overflow: hidden;
+    flex-shrink: 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.matrix-cell::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent);
+    pointer-events: none;
 }
 
 .matrix-cell.changed {
-    animation: matrix-cell-change 400ms ease;
-    background: var(--warning-bg);
-    border-color: var(--warning);
-    color: var(--warning);
+    animation: matrix-cell-change 500ms ease;
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.9), rgba(245, 158, 11, 0.8));
+    border-color: rgba(251, 191, 36, 0.6);
+    box-shadow: 0 0 12px rgba(251, 191, 36, 0.4);
 }
 
 .matrix-cell.ref {
-    background: var(--purple-bg);
-    border-color: var(--purple);
-    color: var(--purple);
-    font-size: 10px;
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.9), rgba(147, 51, 234, 0.8));
+    border-color: rgba(168, 85, 247, 0.6);
+    font-size: 11px;
     cursor: pointer;
 }
 
 .matrix-cell.ref:hover {
-    background: var(--purple);
-    color: #fff;
+    background: linear-gradient(135deg, rgba(168, 85, 247, 1), rgba(147, 51, 234, 1));
     transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(168, 85, 247, 0.5);
 }
 
 @keyframes matrix-cell-change {
-    0%   { transform: scale(1.15); box-shadow: 0 0 0 3px var(--warning-bg); }
-    60%  { transform: scale(0.92); }
+    0%   { transform: scale(1.2); box-shadow: 0 0 16px rgba(251, 191, 36, 0.6); }
+    50%  { transform: scale(0.95); }
     100% { transform: scale(1); }
 }
 
@@ -743,20 +777,20 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    margin-top: 8px;
-    padding: 4px 12px;
+    margin-top: 12px;
+    padding: 6px 12px;
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--text-muted);
     border-top: 1px solid var(--border);
-    padding-top: 8px;
+    padding-top: 12px;
 }
 
 .matrix-dimensions {
     font-weight: 700;
     color: var(--accent);
     background: var(--accent-soft);
-    padding: 2px 8px;
+    padding: 3px 10px;
     border-radius: 4px;
 }
 

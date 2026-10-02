@@ -528,33 +528,26 @@ function Matrix2DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
   
   return (
     <div className="matrix-2d-viz">
-      {/* Grid container with dynamic column sizing */}
-      <div 
-        className="matrix-2d-grid" 
-        style={{ 
-          gridTemplateColumns: `40px repeat(${numCols}, minmax(40px, 1fr))`,
-          gap: '4px'
-        }}
-      >
-        {/* Top-left corner cell (empty) */}
-        <div className="matrix-header-cell matrix-corner"></div>
-        
-        {/* Column headers */}
+      {/* Column headers row */}
+      <div className="matrix-header-row">
+        <div className="matrix-corner-space"></div>
         {Array.from({ length: numCols }, (_, j) => (
-          <div key={`col-${j}`} className="matrix-header-cell matrix-col-header">
+          <div key={`col-${j}`} className="matrix-col-header">
             {j}
           </div>
         ))}
-        
-        {/* Rows with data */}
-        {rows.map((row, i) => {
-          const rowElements = row.elements || []
-          return (
-            <React.Fragment key={`row-${i}`}>
-              {/* Row header */}
-              <div className="matrix-header-cell matrix-row-header">{i}</div>
-              
-              {/* Row cells */}
+      </div>
+      
+      {/* Matrix rows with row headers and cells */}
+      {rows.map((row, i) => {
+        const rowElements = row.elements || []
+        return (
+          <div key={`row-${i}`} className="matrix-data-row">
+            {/* Row header */}
+            <div className="matrix-row-header">{i}</div>
+            
+            {/* Row cells */}
+            <div className="matrix-cells-row">
               {rowElements.map((el, j) => {
                 const isRef = el.type === 'ref'
                 const isTrunc = el.type === 'truncated'
@@ -573,10 +566,10 @@ function Matrix2DViz({ heapObj, heapState, prevHeapState, onHeapClick }) {
                   </div>
                 )
               })}
-            </React.Fragment>
-          )
-        })}
-      </div>
+            </div>
+          </div>
+        )
+      })}
       
       {/* Matrix dimensions info */}
       <div className="matrix-info">
