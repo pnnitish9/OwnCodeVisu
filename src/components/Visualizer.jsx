@@ -2,6 +2,9 @@ import React, { useMemo, useRef } from 'react'
 import { Layers, Database, Grid3x3, Terminal, Link2, BarChart2, List, AlignJustify } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 
+// Updated: Matrix visualization with debug logging
+// Last modified: 2024
+
 /* ================================================================
    HELPERS
    ================================================================ */
