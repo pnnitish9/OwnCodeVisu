@@ -34,6 +34,49 @@ function numVal(v) {
 }
 
 /**
+ * Detect if variables reference rows or columns of a matrix.
+ * Returns { rowRefs: [{varName, rowIndex, heapId}], colRefs: [...] }
+ */
+function detectMatrixRowColRefs(locals, heapState, matrixHeapId, rows, cols) {
+  const rowRefs = []
+  const colRefs = []
+  
+  // Get matrix's row heap IDs
+  const matrixObj = heapState[String(matrixHeapId)]
+  if (!matrixObj?.elements) return { rowRefs, colRefs }
+  
+  const matrixRowHeapIds = new Set(
+    matrixObj.elements
+      .filter(el => el.type === 'ref')
+      .map(el => String(el.heap_id))
+  )
+  
+  // Check each local variable
+  for (const [varName, val] of Object.entries(locals)) {
+    if (varName.startsWith('__')) continue
+    if (!val || val.type !== 'list' || val.heap_ref == null) continue
+    
+    const varHeapId = String(val.heap_ref)
+    const varHeapObj = heapState[varHeapId]
+    if (!varHeapObj?.elements) continue
+    
+    // Check if this variable references a matrix row
+    if (matrixRowHeapIds.has(varHeapId)) {
+      // Find which row index this corresponds to
+      for (let i = 0; i < matrixObj.elements.length; i++) {
+        const rowEl = matrixObj.elements[i]
+        if (rowEl.type === 'ref' && String(rowEl.heap_id) === varHeapId) {
+          rowRefs.push({ varName, rowIndex: i, heapId: varHeapId })
+          break
+        }
+      }
+    }
+  }
+  
+  return { rowRefs, colRefs }
+}
+
+/**
  * Find variables that look like array pointers (mid, left, right, i, j, lo, hi…)
  * and return { name, index, colorIdx }.
  */
@@ -356,13 +399,19 @@ function ArrayViz({ heapObj, varName, locals, prevHeapObj, onHeapClick }) {
 /* ================================================================
    MATRIX 2D VIZ  (grid layout with row/column indices)
    ================================================================ */
-function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapState }) {
+function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapState, matrixHeapId }) {
   const dimensions = heapObj.dimensions || []
   const [rows, cols] = dimensions
   
   if (!rows || !cols) {
     return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>invalid matrix dimensions</div>
   }
+
+  // Detect row/column variable references
+  const { rowRefs, colRefs } = useMemo(() => 
+    detectMatrixRowColRefs(locals, heapState, matrixHeapId, rows, cols),
+    [locals, heapState, matrixHeapId, rows, cols]
+  )
 
   // Build 2D grid from heap structure
   const matrix = useMemo(() => {
@@ -390,7 +439,6 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
     if (!prevHeapObj?.elements) return []
     const grid = []
     const prevOuterElements = prevHeapObj.elements || []
-    const prevHeapState = {} // We'll need to pass this from parent
     
     for (let i = 0; i < Math.min(rows, prevOuterElements.length); i++) {
       const rowElement = prevOuterElements[i]
@@ -412,7 +460,7 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
   const matrixPointers = useMemo(() => {
     const pointers = []
     
-    // Check for i, j pattern
+    // Check for i, j pattern (both indices present - highlights single cell)
     const i = locals?.i
     const j = locals?.j
     if (i && j) {
@@ -421,9 +469,23 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
       if (iVal != null && jVal != null && iVal >= 0 && iVal < rows && jVal >= 0 && jVal < cols) {
         pointers.push({ row: iVal, col: jVal, name: '[i][j]', colorIdx: 0 })
       }
+    } else if (i && !j) {
+      // Only i present - check if it's being used as row index
+      const iVal = numVal(i)
+      if (iVal != null && iVal >= 0 && iVal < rows) {
+        // Check if there's a 'value' variable that might be accessing matrix[i][something]
+        const value = locals?.value
+        if (value) {
+          // We're likely iterating: for value in row
+          pointers.push({ row: iVal, col: null, name: 'i', colorIdx: 0, isRowHighlight: true })
+        } else {
+          // Just highlight the row
+          pointers.push({ row: iVal, col: null, name: 'i', colorIdx: 0, isRowHighlight: true })
+        }
+      }
     }
     
-    // Check for row, col pattern
+    // Check for row, col pattern (both present - highlights single cell)
     const row = locals?.row
     const col = locals?.col
     if (row && col) {
@@ -431,6 +493,12 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
       const colVal = numVal(col)
       if (rowVal != null && colVal != null && rowVal >= 0 && rowVal < rows && colVal >= 0 && colVal < cols) {
         pointers.push({ row: rowVal, col: colVal, name: '[row][col]', colorIdx: 1 })
+      }
+    } else if (row && !col) {
+      // Only row present - highlight entire row
+      const rowVal = numVal(row)
+      if (rowVal != null && rowVal >= 0 && rowVal < rows) {
+        pointers.push({ row: rowVal, col: null, name: 'row', colorIdx: 1, isRowHighlight: true })
       }
     }
     
@@ -443,6 +511,12 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
       if (rVal != null && cVal != null && rVal >= 0 && rVal < rows && cVal >= 0 && cVal < cols) {
         pointers.push({ row: rVal, col: cVal, name: '[r][c]', colorIdx: 2 })
       }
+    } else if (r && !c) {
+      // Only r present - highlight entire row
+      const rVal = numVal(r)
+      if (rVal != null && rVal >= 0 && rVal < rows) {
+        pointers.push({ row: rVal, col: null, name: 'r', colorIdx: 2, isRowHighlight: true })
+      }
     }
     
     return pointers
@@ -452,12 +526,30 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
   const pointerMap = useMemo(() => {
     const map = {}
     for (const ptr of matrixPointers) {
-      const key = `${ptr.row},${ptr.col}`
-      if (!map[key]) map[key] = []
-      map[key].push(ptr)
+      if (ptr.isRowHighlight) {
+        // Mark entire row
+        for (let c = 0; c < cols; c++) {
+          const key = `${ptr.row},${c}`
+          if (!map[key]) map[key] = []
+          map[key].push(ptr)
+        }
+      } else if (ptr.col !== null) {
+        const key = `${ptr.row},${ptr.col}`
+        if (!map[key]) map[key] = []
+        map[key].push(ptr)
+      }
     }
     return map
-  }, [matrixPointers])
+  }, [matrixPointers, cols])
+
+  // Build row highlight map
+  const rowHighlightMap = useMemo(() => {
+    const map = {}
+    for (const ref of rowRefs) {
+      map[ref.rowIndex] = ref
+    }
+    return map
+  }, [rowRefs])
 
   // Detect changed cells
   const changedCells = useMemo(() => {
@@ -476,6 +568,19 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
 
   return (
     <div className="matrix-2d-wrap">
+      {/* Show variable labels for row references */}
+      {rowRefs.length > 0 && (
+        <div className="matrix-var-labels">
+          {rowRefs.map(ref => (
+            <div key={ref.varName} className="matrix-var-label">
+              <span className="matrix-var-name">{ref.varName}</span>
+              <span className="matrix-var-arrow">→</span>
+              <span className="matrix-var-target">row {ref.rowIndex}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      
       <div className="matrix-2d-container">
         {/* Column headers */}
         <div className="matrix-2d-grid" style={{ gridTemplateColumns: `40px repeat(${cols}, 50px)` }}>
@@ -490,7 +595,15 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
           {matrix.map((row, i) => (
             <React.Fragment key={`row-${i}`}>
               {/* Row header */}
-              <div className="matrix-header-cell">{i}</div>
+              <div className={`matrix-header-cell ${rowHighlightMap[i] ? 'matrix-header-highlighted' : ''} ${matrixPointers.some(p => p.isRowHighlight && p.row === i) ? 'matrix-header-active' : ''}`}>
+                {i}
+                {rowHighlightMap[i] && (
+                  <div className="matrix-row-badge">{rowHighlightMap[i].varName}</div>
+                )}
+                {matrixPointers.some(p => p.isRowHighlight && p.row === i) && !rowHighlightMap[i] && (
+                  <div className="matrix-row-indicator">●</div>
+                )}
+              </div>
               
               {/* Row cells */}
               {Array.from({ length: cols }, (_, j) => {
@@ -500,12 +613,28 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
                 const isRef = cell?.type === 'ref'
                 const val = !cell ? '—' : isRef ? `→${cell.heap_id}` : String(cell.value ?? '')
                 
+                // Check if this row is highlighted by a variable reference or pointer
+                const isRowHighlighted = rowHighlightMap[i] != null
+                const isRowPointerActive = matrixPointers.some(p => p.isRowHighlight && p.row === i)
+                
                 let highlight = ''
-                if (changedCells.has(cellKey)) highlight = 'changed'
-                else if (cellPtrs.length > 0) {
+                if (changedCells.has(cellKey)) {
+                  highlight = 'changed'
+                } else if (cellPtrs.length > 0 && !cellPtrs[0].isRowHighlight) {
+                  // Specific cell pointer (takes priority)
                   const minColor = Math.min(...cellPtrs.map(p => p.colorIdx))
                   highlight = ['ptr-primary', 'ptr-secondary', 'ptr-tertiary'][minColor]
-                } else if (isRef) highlight = 'ref'
+                } else if (isRowPointerActive) {
+                  // Row is being accessed via index variable
+                  const activePointer = matrixPointers.find(p => p.isRowHighlight && p.row === i)
+                  const colorClass = ['row-highlight-primary', 'row-highlight-secondary', 'row-highlight-tertiary'][activePointer?.colorIdx || 0]
+                  highlight = colorClass
+                } else if (isRowHighlighted) {
+                  // Row has a named variable reference
+                  highlight = 'row-highlight'
+                } else if (isRef) {
+                  highlight = 'ref'
+                }
                 
                 return (
                   <div
@@ -514,7 +643,7 @@ function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
                     onClick={isRef ? () => onHeapClick(cell.heap_id) : undefined}
                     style={isRef ? { cursor: 'pointer' } : {}}
                   >
-                    {cellPtrs.length > 0 && (
+                    {cellPtrs.length > 0 && !cellPtrs[0].isRowHighlight && (
                       <div className="matrix-cell-pointer-badge">
                         {cellPtrs[0].name}
                       </div>
@@ -1187,14 +1316,40 @@ export default function Visualizer({ onHeapClick }) {
   const graphAdj = graphResult?.adj || null
   const graphExcludeIds = graphResult?.excludeIds || new Set()
 
+  // ---- Find matrices first to identify their row heap IDs ------------
+  const matrixVars = Object.entries(locals).filter(([name, val]) => {
+    if (name.startsWith('__')) return false
+    if (!val || val.type !== 'list' || val.heap_ref == null) return false
+    const heapObj = heapState[String(val.heap_ref)]
+    return heapObj?.is_matrix && heapObj?.dimensions
+  })
+
+  // Collect all matrix row heap IDs to exclude from separate display
+  const matrixRowHeapIds = new Set()
+  for (const [, val] of matrixVars) {
+    const matrixObj = heapState[String(val.heap_ref)]
+    if (matrixObj?.elements) {
+      for (const el of matrixObj.elements) {
+        if (el.type === 'ref') {
+          matrixRowHeapIds.add(String(el.heap_id))
+        }
+      }
+    }
+  }
+
   // ---- Find list/tuple variables to feature as smart diagrams --------
   const listVars = Object.entries(locals).filter(([name, val]) => {
     if (name.startsWith('__')) return false
-    return (val?.type === 'list' || val?.type === 'tuple') && val.heap_ref != null
+    if (!val || (val.type !== 'list' && val.type !== 'tuple') || val.heap_ref == null) return false
+    // Exclude matrix row references
+    if (matrixRowHeapIds.has(String(val.heap_ref))) return false
+    return true
   })
+  
   const featuredIds = new Set([
     ...listVars.map(([, v]) => String(v.heap_ref)),
-    ...graphExcludeIds  // Exclude all graph-related heap objects
+    ...matrixRowHeapIds,  // Exclude matrix rows from heap section
+    ...graphExcludeIds    // Exclude all graph-related heap objects
   ])
 
   return (
@@ -1248,6 +1403,7 @@ export default function Visualizer({ onHeapClick }) {
                   prevHeapObj={prevObj}
                   onHeapClick={onHeapClick}
                   heapState={heapState}
+                  matrixHeapId={heapId}
                 />
               </Section>
             )
