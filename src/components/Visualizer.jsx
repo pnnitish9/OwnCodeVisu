@@ -77,6 +77,88 @@ function detectMatrixRowColRefs(locals, heapState, matrixHeapId, rows, cols) {
 }
 
 /**
+ * Detect recursion in call tree and check if there's meaningful recursion.
+ * Returns { isRecursive, recursiveFunctions: Set }
+ */
+function detectRecursion(callTree) {
+  if (!callTree || callTree.length === 0) {
+    return { isRecursive: false, recursiveFunctions: new Set() }
+  }
+  
+  const functionCallCounts = {}
+  const recursiveFunctions = new Set()
+  
+  // Count calls to each function
+  for (const node of callTree) {
+    const funcName = node.function_name
+    functionCallCounts[funcName] = (functionCallCounts[funcName] || 0) + 1
+    
+    // A function is recursive if called more than once
+    if (functionCallCounts[funcName] > 1) {
+      recursiveFunctions.add(funcName)
+    }
+  }
+  
+  return {
+    isRecursive: recursiveFunctions.size > 0,
+    recursiveFunctions
+  }
+}
+
+/**
+ * Build a tree structure for visualization at a given step.
+ * Only includes calls that have been made up to currentStep.
+ */
+function buildRecursionTreeAtStep(callTree, currentStep) {
+  if (!callTree || callTree.length === 0) return []
+  
+  // Filter to calls that have been made by currentStep
+  const activeCalls = callTree.filter(node => node.step_id <= currentStep)
+  
+  // Build tree structure with children
+  const nodeMap = {}
+  const roots = []
+  
+  for (const node of activeCalls) {
+    const treeNode = {
+      ...node,
+      children: [],
+      isActive: node.step_id <= currentStep && 
+                (node.return_step_id === null || node.return_step_id > currentStep),
+      hasReturned: node.return_step_id !== null && node.return_step_id <= currentStep
+    }
+    nodeMap[node.call_id] = treeNode
+  }
+  
+  // Link children to parents
+  for (const node of Object.values(nodeMap)) {
+    if (node.parent_id === null) {
+      roots.push(node)
+    } else if (nodeMap[node.parent_id]) {
+      nodeMap[node.parent_id].children.push(node)
+    }
+  }
+  
+  return roots
+}
+
+/**
+ * Format function arguments for display
+ */
+function formatFunctionArgs(args) {
+  if (!args || Object.keys(args).length === 0) return ''
+  
+  const argStrs = Object.entries(args)
+    .filter(([key]) => key !== '__return__')
+    .map(([key, val]) => {
+      const value = val?.value ?? val?.display ?? String(val)
+      return `${key}=${value}`
+    })
+  
+  return argStrs.join(', ')
+}
+
+/**
  * Find variables that look like array pointers (mid, left, right, i, j, lo, hi…)
  * and return { name, index, colorIdx }.
  */
@@ -795,6 +877,464 @@ function Matrix3DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapS
 }
 
 /* ================================================================
+   RECURSION TREE VIZ  (hierarchical function call tree with zoom/pan)
+   ================================================================ */
+function RecursionTreeViz({ callTree, currentStep }) {
+  // ALL HOOKS MUST BE AT THE TOP LEVEL - NEVER AFTER CONDITIONAL RETURNS
+  const containerRef = useRef(null)
+  const svgRef = useRef(null)
+  const [containerWidth, setContainerWidth] = React.useState(800)
+  
+  // Zoom and pan state
+  const [zoom, setZoom] = React.useState(1)
+  const [panOffset, setPanOffset] = React.useState({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = React.useState(false)
+  const [panStart, setPanStart] = React.useState({ x: 0, y: 0 })
+
+  // Memoize tree roots - MUST be before early return
+  const treeRoots = useMemo(
+    () => buildRecursionTreeAtStep(callTree, currentStep),
+    [callTree, currentStep]
+  )
+
+  // Detect container width for responsive layout
+  React.useEffect(() => {
+    if (!containerRef.current) return
+    
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width)
+      }
+    })
+    
+    observer.observe(containerRef.current)
+    return () => observer.disconnect()
+  }, [])
+
+  // Responsive dimensions based on container width
+  const isMobile = containerWidth < 640
+  const isTablet = containerWidth >= 640 && containerWidth < 1024
+  
+  const NODE_MIN_WIDTH = isMobile ? 80 : 100
+  const NODE_HEIGHT = isMobile ? 50 : 60
+  const HORIZONTAL_SPACING = isMobile ? 20 : isTablet ? 30 : 40
+  const VERTICAL_SPACING = isMobile ? 60 : 80
+  const PADDING = isMobile ? 8 : 12
+
+  // Measure text width for dynamic node sizing
+  const measureText = React.useCallback((text, fontSize = 13) => {
+    if (typeof document === 'undefined') return text.length * 8
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    context.font = `600 ${fontSize}px var(--font-mono, monospace)`
+    return context.measureText(text).width
+  }, [])
+
+  // Calculate node width based on content
+  const calculateNodeWidth = React.useCallback((node) => {
+    const args = formatFunctionArgs(node.args)
+    const text = `${node.function_name}(${args})`
+    const textWidth = measureText(text, isMobile ? 11 : 13)
+    return Math.max(NODE_MIN_WIDTH, Math.min(textWidth + PADDING * 2, isMobile ? 150 : 200))
+  }, [measureText, isMobile, NODE_MIN_WIDTH, PADDING])
+
+  // Stable node dimensions - memoize to prevent recalculation
+  const nodeWidths = useMemo(() => {
+    if (treeRoots.length === 0) return {}
+    
+    const widths = {}
+    const measure = (nodes) => {
+      for (const node of nodes) {
+        widths[node.call_id] = calculateNodeWidth(node)
+        if (node.children?.length > 0) {
+          measure(node.children)
+        }
+      }
+    }
+    measure(treeRoots)
+    return widths
+  }, [treeRoots, calculateNodeWidth])
+
+  // Calculate positions with stable layout
+  const calculateNodePositions = React.useCallback((node, depth = 0, offsetX = 0) => {
+    const positions = []
+    const childCount = node.children.length
+    const nodeWidth = nodeWidths[node.call_id] || NODE_MIN_WIDTH
+
+    // Position for current node
+    const nodePos = {
+      node,
+      x: offsetX,
+      y: depth * (NODE_HEIGHT + VERTICAL_SPACING),
+      width: nodeWidth,
+      height: NODE_HEIGHT
+    }
+    positions.push(nodePos)
+
+    // Position children
+    if (childCount > 0) {
+      const childWidths = node.children.map(c => nodeWidths[c.call_id] || NODE_MIN_WIDTH)
+      const totalChildWidth = childWidths.reduce((sum, w) => sum + w, 0) + 
+                              (childCount - 1) * HORIZONTAL_SPACING
+      let childX = offsetX - totalChildWidth / 2 + nodeWidth / 2
+
+      for (let i = 0; i < node.children.length; i++) {
+        const child = node.children[i]
+        const childWidth = childWidths[i]
+        const childPositions = calculateNodePositions(child, depth + 1, childX)
+        positions.push(...childPositions)
+        childX += childWidth + HORIZONTAL_SPACING
+      }
+    }
+
+    return positions
+  }, [nodeWidths, NODE_HEIGHT, VERTICAL_SPACING, HORIZONTAL_SPACING, NODE_MIN_WIDTH])
+
+  // Calculate positions for all trees - memoized for stability
+  const allPositions = useMemo(() => {
+    if (treeRoots.length === 0) return []
+    
+    const positions = []
+    let currentX = 60
+    
+    for (const root of treeRoots) {
+      const rootWidth = nodeWidths[root.call_id] || NODE_MIN_WIDTH
+      const rootPositions = calculateNodePositions(root, 0, currentX + rootWidth / 2)
+      positions.push(...rootPositions)
+      
+      // Calculate width of this tree
+      const maxX = Math.max(...rootPositions.map(p => p.x + p.width))
+      currentX = maxX + (isMobile ? 40 : 80)
+    }
+    
+    return positions
+  }, [treeRoots, nodeWidths, calculateNodePositions, isMobile, NODE_MIN_WIDTH])
+
+  // Find parent position for drawing arrows
+  const positionMap = useMemo(() => {
+    const map = {}
+    for (const pos of allPositions) {
+      map[pos.node.call_id] = pos
+    }
+    return map
+  }, [allPositions])
+
+  // Calculate SVG dimensions and bounds
+  const treeBounds = useMemo(() => {
+    if (allPositions.length === 0) {
+      return { minX: 0, minY: 0, maxX: 400, maxY: 200, width: 400, height: 200 }
+    }
+    
+    const minX = Math.min(...allPositions.map(p => p.x)) - 40
+    const minY = Math.min(...allPositions.map(p => p.y)) - 40
+    const maxX = Math.max(...allPositions.map(p => p.x + p.width)) + 40
+    const maxY = Math.max(...allPositions.map(p => p.y + p.height)) + 40
+    
+    return {
+      minX,
+      minY,
+      maxX,
+      maxY,
+      width: maxX - minX,
+      height: maxY - minY
+    }
+  }, [allPositions])
+
+  // Zoom controls
+  const handleZoomIn = React.useCallback(() => {
+    setZoom(z => Math.min(z * 1.2, 3))
+  }, [])
+
+  const handleZoomOut = React.useCallback(() => {
+    setZoom(z => Math.max(z / 1.2, 0.3))
+  }, [])
+
+  const handleResetView = React.useCallback(() => {
+    setZoom(1)
+    setPanOffset({ x: 0, y: 0 })
+  }, [])
+
+  const handleFitToView = React.useCallback(() => {
+    if (!containerRef.current || allPositions.length === 0) return
+    
+    const containerRect = containerRef.current.getBoundingClientRect()
+    const padding = 40
+    
+    const scaleX = (containerRect.width - padding * 2) / treeBounds.width
+    const scaleY = (containerRect.height - padding * 2) / treeBounds.height
+    const newZoom = Math.min(scaleX, scaleY, 1.5)
+    
+    // Center the tree
+    const centerX = (containerRect.width - treeBounds.width * newZoom) / 2
+    const centerY = (containerRect.height - treeBounds.height * newZoom) / 2
+    
+    setZoom(newZoom)
+    setPanOffset({
+      x: centerX - treeBounds.minX * newZoom,
+      y: centerY - treeBounds.minY * newZoom
+    })
+  }, [treeBounds, allPositions.length])
+
+  // Mouse wheel zoom
+  const handleWheel = React.useCallback((e) => {
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? 0.9 : 1.1
+    setZoom(z => Math.max(0.3, Math.min(3, z * delta)))
+  }, [])
+
+  // Pan handlers
+  const handleMouseDown = React.useCallback((e) => {
+    if (e.button === 0) { // Left mouse button
+      setIsPanning(true)
+      setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y })
+    }
+  }, [panOffset])
+
+  const handleMouseMove = React.useCallback((e) => {
+    if (isPanning) {
+      setPanOffset({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y
+      })
+    }
+  }, [isPanning, panStart])
+
+  const handleMouseUp = React.useCallback(() => {
+    setIsPanning(false)
+  }, [])
+
+  // Touch handlers for mobile
+  const handleTouchStart = React.useCallback((e) => {
+    if (e.touches.length === 1) {
+      setIsPanning(true)
+      setPanStart({ 
+        x: e.touches[0].clientX - panOffset.x, 
+        y: e.touches[0].clientY - panOffset.y 
+      })
+    }
+  }, [panOffset])
+
+  const handleTouchMove = React.useCallback((e) => {
+    if (isPanning && e.touches.length === 1) {
+      e.preventDefault()
+      setPanOffset({
+        x: e.touches[0].clientX - panStart.x,
+        y: e.touches[0].clientY - panStart.y
+      })
+    }
+  }, [isPanning, panStart])
+
+  const handleTouchEnd = React.useCallback(() => {
+    setIsPanning(false)
+  }, [])
+
+  // Attach event listeners
+  React.useEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+
+    svg.addEventListener('wheel', handleWheel, { passive: false })
+    return () => svg.removeEventListener('wheel', handleWheel)
+  }, [handleWheel])
+
+  React.useEffect(() => {
+    if (isPanning) {
+      window.addEventListener('mousemove', handleMouseMove)
+      window.addEventListener('mouseup', handleMouseUp)
+      return () => {
+        window.removeEventListener('mousemove', handleMouseMove)
+        window.removeEventListener('mouseup', handleMouseUp)
+      }
+    }
+  }, [isPanning, handleMouseMove, handleMouseUp])
+
+  // Auto fit on first load or when tree changes significantly
+  React.useEffect(() => {
+    if (allPositions.length > 0 && zoom === 1 && panOffset.x === 0 && panOffset.y === 0) {
+      // Small delay to ensure container is rendered
+      const timer = setTimeout(handleFitToView, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [allPositions.length, zoom, panOffset, handleFitToView])
+
+  // NOW we can do early return - ALL HOOKS have been called
+  if (treeRoots.length === 0) {
+    return (
+      <div className="recursion-tree-wrap" ref={containerRef}>
+        <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: '20px' }}>
+          No recursion tree available
+        </div>
+      </div>
+    )
+  }
+
+  const containerHeight = Math.max(400, treeBounds.height * zoom + 100)
+
+  return (
+    <div className="recursion-tree-wrap" ref={containerRef}>
+      {/* Zoom controls */}
+      <div className="recursion-controls">
+        <button 
+          className="recursion-control-btn" 
+          onClick={handleZoomIn}
+          title="Zoom In"
+        >
+          +
+        </button>
+        <button 
+          className="recursion-control-btn" 
+          onClick={handleZoomOut}
+          title="Zoom Out"
+        >
+          −
+        </button>
+        <button 
+          className="recursion-control-btn" 
+          onClick={handleFitToView}
+          title="Fit to View"
+        >
+          ⊡
+        </button>
+        <button 
+          className="recursion-control-btn" 
+          onClick={handleResetView}
+          title="Reset View"
+        >
+          ⟲
+        </button>
+        <span className="recursion-zoom-label">{Math.round(zoom * 100)}%</span>
+      </div>
+
+      {/* SVG with pan and zoom */}
+      <div 
+        className="recursion-tree-container"
+        style={{ 
+          height: `${Math.min(containerHeight, 800)}px`,
+          cursor: isPanning ? 'grabbing' : 'grab'
+        }}
+      >
+        <svg 
+          ref={svgRef}
+          width="100%"
+          height="100%"
+          className="recursion-tree-svg"
+          onMouseDown={handleMouseDown}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          <g transform={`translate(${panOffset.x}, ${panOffset.y}) scale(${zoom})`}>
+            {/* Arrow marker definition */}
+            <defs>
+              <marker
+                id="arrowhead"
+                markerWidth="10"
+                markerHeight="10"
+                refX="5"
+                refY="5"
+                orient="auto"
+              >
+                <polygon points="0 0, 10 5, 0 10" fill="var(--border-light)" />
+              </marker>
+              <marker
+                id="arrowhead-active"
+                markerWidth="10"
+                markerHeight="10"
+                refX="5"
+                refY="5"
+                orient="auto"
+              >
+                <polygon points="0 0, 10 5, 0 10" fill="var(--accent)" />
+              </marker>
+            </defs>
+
+            {/* Draw arrows first (so they appear behind nodes) */}
+            {allPositions.map(pos => {
+              if (pos.node.parent_id && positionMap[pos.node.parent_id]) {
+                const parentPos = positionMap[pos.node.parent_id]
+                const x1 = parentPos.x + parentPos.width / 2
+                const y1 = parentPos.y + parentPos.height
+                const x2 = pos.x + pos.width / 2
+                const y2 = pos.y
+
+                const isActiveConnection = pos.node.isActive || parentPos.node.isActive
+
+                return (
+                  <line
+                    key={`arrow-${pos.node.call_id}`}
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    className={`recursion-arrow ${isActiveConnection ? 'active' : ''}`}
+                    markerEnd={isActiveConnection ? 'url(#arrowhead-active)' : 'url(#arrowhead)'}
+                  />
+                )
+              }
+              return null
+            })}
+
+            {/* Draw nodes */}
+            {allPositions.map(pos => {
+              const { node, x, y, width, height } = pos
+              const args = formatFunctionArgs(node.args)
+              const returnVal = node.return_value?.value ?? node.return_value?.display
+              
+              let nodeClass = 'recursion-node'
+              if (node.isActive) nodeClass += ' active'
+              if (node.hasReturned) nodeClass += ' returned'
+
+              const fontSize = isMobile ? 11 : 13
+              const returnFontSize = isMobile ? 9 : 11
+
+              return (
+                <g key={`node-${node.call_id}`} className={nodeClass}>
+                  {/* Node rectangle */}
+                  <rect
+                    x={x}
+                    y={y}
+                    width={width}
+                    height={height}
+                    rx={6}
+                    className="recursion-node-box"
+                  />
+                  
+                  {/* Function name and args */}
+                  <text
+                    x={x + width / 2}
+                    y={y + height / 2 - (node.hasReturned && returnVal !== undefined ? 6 : 0)}
+                    className="recursion-node-title"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={fontSize}
+                  >
+                    {node.function_name}({args})
+                  </text>
+                  
+                  {/* Return value if available */}
+                  {node.hasReturned && returnVal !== undefined && (
+                    <text
+                      x={x + width / 2}
+                      y={y + height / 2 + 12}
+                      className="recursion-node-return"
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fontSize={returnFontSize}
+                    >
+                      → {String(returnVal)}
+                    </text>
+                  )}
+                </g>
+              )
+            })}
+          </g>
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+/* ================================================================
    STACK VIZ  (vertical, top at top)
    ================================================================ */
 function StackViz({ heapObj }) {
@@ -1352,10 +1892,24 @@ export default function Visualizer({ onHeapClick }) {
     ...graphExcludeIds    // Exclude all graph-related heap objects
   ])
 
+  // ---- Detect recursion -----------------------------------------------
+  const callTree = traceData.call_tree || []
+  const { isRecursive, recursiveFunctions } = useMemo(
+    () => detectRecursion(callTree),
+    [callTree]
+  )
+
   return (
     <div className="viz-grid">
       {/* Current executing line */}
       <CurrentLineBanner step={step} />
+
+      {/* Recursion Tree (if recursive functions detected) */}
+      {isRecursive && callTree.length > 0 && (
+        <Section icon={Layers} title={`Recursion Tree — ${[...recursiveFunctions].join(', ')}`}>
+          <RecursionTreeViz callTree={callTree} currentStep={currentStep} />
+        </Section>
+      )}
 
       {/* Graph (if detected) */}
       {graphAdj && (

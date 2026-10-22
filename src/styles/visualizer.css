@@ -533,6 +533,238 @@
     font-size: 10px;
 }
 
+/* ---- Recursion Tree ------------------------------------------------ */
+.recursion-tree-wrap {
+    position: relative;
+    overflow: hidden;
+    padding: 0;
+    background: var(--bg-editor);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    max-width: 100%;
+}
+
+/* Zoom controls */
+.recursion-controls {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    z-index: 10;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.recursion-control-btn {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 150ms ease;
+    user-select: none;
+}
+
+.recursion-control-btn:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+    transform: translateY(-1px);
+}
+
+.recursion-control-btn:active {
+    transform: translateY(0);
+}
+
+.recursion-zoom-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 0 6px;
+    min-width: 45px;
+    text-align: center;
+}
+
+/* Tree container with pan/zoom */
+.recursion-tree-container {
+    width: 100%;
+    overflow: hidden;
+    position: relative;
+    touch-action: none; /* Prevent default touch behaviors */
+}
+
+.recursion-tree-svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Arrows connecting nodes - NO transition on stroke */
+.recursion-arrow {
+    stroke: var(--border-light);
+    stroke-width: 2;
+    fill: none;
+    pointer-events: none;
+}
+
+.recursion-arrow.active {
+    stroke: var(--accent);
+    stroke-width: 2.5;
+}
+
+/* Node group - NO transition on transform */
+.recursion-node {
+    pointer-events: all;
+}
+
+/* Node rectangle background - only animate fill and stroke changes */
+.recursion-node-box {
+    fill: var(--bg-card);
+    stroke: var(--border-light);
+    stroke-width: 2;
+    transition: fill 200ms ease, stroke 200ms ease, stroke-width 200ms ease, filter 200ms ease;
+    /* Removed transform transition - position is static */
+}
+
+/* Active node (currently executing) - animate only color and shadow */
+.recursion-node.active .recursion-node-box {
+    fill: var(--accent-soft);
+    stroke: var(--accent);
+    stroke-width: 3;
+    filter: drop-shadow(0 4px 12px rgba(59,130,246,.4));
+}
+
+/* Subtle pulse only on active nodes via opacity */
+@keyframes recursion-node-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.9;
+    }
+}
+
+.recursion-node.active .recursion-node-box {
+    animation: recursion-node-pulse 2s ease-in-out infinite;
+}
+
+/* Returned node (completed) - only color transition */
+.recursion-node.returned .recursion-node-box {
+    fill: var(--success-bg);
+    stroke: var(--success);
+    stroke-width: 2;
+}
+
+/* Node text - function name and args - only animate fill color */
+.recursion-node-title {
+    fill: var(--text-primary);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    pointer-events: none;
+    transition: fill 200ms ease;
+    user-select: none;
+}
+
+.recursion-node.active .recursion-node-title {
+    fill: var(--accent);
+    font-weight: 800;
+}
+
+.recursion-node.returned .recursion-node-title {
+    fill: var(--success);
+}
+
+/* Return value text - only animate opacity */
+.recursion-node-return {
+    fill: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    pointer-events: none;
+    user-select: none;
+}
+
+.recursion-node.returned .recursion-node-return {
+    fill: var(--success);
+    font-weight: 700;
+    animation: return-value-appear 300ms ease;
+}
+
+/* Return value appearance - only opacity, no transform */
+@keyframes return-value-appear {
+    0% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Node hover effect - subtle, no movement */
+.recursion-node:hover .recursion-node-box {
+    stroke: var(--accent);
+    filter: drop-shadow(0 2px 8px rgba(59,130,246,.2));
+}
+
+/* Responsive adjustments for mobile */
+@media (max-width: 639px) {
+    .recursion-tree-wrap {
+        padding: 0;
+    }
+    
+    .recursion-controls {
+        top: 8px;
+        right: 8px;
+        gap: 4px;
+        padding: 2px;
+    }
+    
+    .recursion-control-btn {
+        width: 28px;
+        height: 28px;
+        font-size: 14px;
+    }
+    
+    .recursion-zoom-label {
+        font-size: 10px;
+        min-width: 40px;
+        padding: 0 4px;
+    }
+    
+    .recursion-node-title {
+        font-size: 11px;
+    }
+    
+    .recursion-node-return {
+        font-size: 9px;
+    }
+}
+
+/* Tablet adjustments */
+@media (min-width: 640px) and (max-width: 1023px) {
+    .recursion-tree-wrap {
+        padding: 0;
+    }
+    
+    .recursion-controls {
+        gap: 5px;
+    }
+}
+
 /* ---- Stack (vertical list) ----------------------------------------- */
 .stack-viz {
     display: flex;
