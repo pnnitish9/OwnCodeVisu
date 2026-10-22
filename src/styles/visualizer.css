@@ -533,235 +533,471 @@
     font-size: 10px;
 }
 
-/* ---- Recursion Tree ------------------------------------------------ */
-.recursion-tree-wrap {
+/* ================================================================
+   PROFESSIONAL STACK SPACE VISUALIZATION
+   Clean vertical stack, newest at top, inspired by reference design
+   ================================================================ */
+
+.stack-viz-professional {
     position: relative;
-    overflow: hidden;
-    padding: 0;
     background: var(--bg-editor);
     border-radius: 8px;
     border: 1px solid var(--border);
-    max-width: 100%;
-}
-
-/* Zoom controls */
-.recursion-controls {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    z-index: 10;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 4px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-
-.recursion-control-btn {
-    width: 32px;
-    height: 32px;
-    border: 1px solid var(--border-light);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 16px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 150ms ease;
-    user-select: none;
-}
-
-.recursion-control-btn:hover {
-    background: var(--accent-soft);
-    border-color: var(--accent);
-    color: var(--accent);
-    transform: translateY(-1px);
-}
-
-.recursion-control-btn:active {
-    transform: translateY(0);
-}
-
-.recursion-zoom-label {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    padding: 0 6px;
-    min-width: 45px;
-    text-align: center;
-}
-
-/* Tree container with pan/zoom */
-.recursion-tree-container {
-    width: 100%;
     overflow: hidden;
-    position: relative;
-    touch-action: none; /* Prevent default touch behaviors */
 }
 
-.recursion-tree-svg {
-    display: block;
-    width: 100%;
+/* Header with metrics and indicators */
+.stack-viz-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.stack-viz-metric {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+}
+
+.metric-label {
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 9px;
+}
+
+.metric-value {
+    color: var(--text-primary);
+    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 14px;
+}
+
+.metric-value.success {
+    color: var(--success);
+}
+
+/* Memory bar */
+.memory-bar-container {
+    width: 70px;
+    height: 4px;
+    background: var(--border-light);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.memory-bar-fill {
     height: 100%;
-    user-select: none;
-    -webkit-user-select: none;
+    border-radius: 2px;
+    transition: width 300ms ease, background-color 300ms ease;
 }
 
-/* Arrows connecting nodes - NO transition on stroke */
-.recursion-arrow {
-    stroke: var(--border-light);
-    stroke-width: 2;
-    fill: none;
-    pointer-events: none;
+/* Stack indicators (push/pop) */
+.stack-viz-indicators {
+    display: flex;
+    gap: 12px;
+    margin-left: auto;
 }
 
-.recursion-arrow.active {
-    stroke: var(--accent);
-    stroke-width: 2.5;
+.stack-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
 }
 
-/* Node group - NO transition on transform */
-.recursion-node {
-    pointer-events: all;
+.push-indicator {
+    color: var(--accent);
 }
 
-/* Node rectangle background - only animate fill and stroke changes */
-.recursion-node-box {
-    fill: var(--bg-card);
-    stroke: var(--border-light);
-    stroke-width: 2;
-    transition: fill 200ms ease, stroke 200ms ease, stroke-width 200ms ease, filter 200ms ease;
-    /* Removed transform transition - position is static */
+.pop-indicator {
+    color: var(--success);
 }
 
-/* Active node (currently executing) - animate only color and shadow */
-.recursion-node.active .recursion-node-box {
-    fill: var(--accent-soft);
-    stroke: var(--accent);
-    stroke-width: 3;
-    filter: drop-shadow(0 4px 12px rgba(59,130,246,.4));
+.indicator-arrow {
+    font-size: 14px;
+    line-height: 1;
 }
 
-/* Subtle pulse only on active nodes via opacity */
-@keyframes recursion-node-pulse {
+.indicator-label {
+    opacity: 0.7;
+}
+
+/* Stack container */
+.stack-viz-container {
+    position: relative;
+    padding: 16px;
+    max-height: 500px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.stack-viz-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.stack-viz-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.stack-viz-container::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+
+.stack-viz-frames {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    position: relative;
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+/* Individual stack frame - professional horizontal layout */
+.stack-frame-pro {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-card);
+    border: 2px solid var(--border-light);
+    border-radius: 6px;
+    padding: 10px 14px;
+    position: relative;
+    transition: all 200ms ease;
+}
+
+/* Pushing animation */
+.stack-frame-pro.frame-pushing {
+    animation: frame-slide-in 300ms ease-out;
+}
+
+@keyframes frame-slide-in {
+    0% {
+        opacity: 0;
+        transform: translateY(-20px) scale(0.95);
+    }
+    60% {
+        transform: translateY(2px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* Active frame (currently executing) */
+.stack-frame-pro.frame-active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.2);
+}
+
+/* Returning frame (showing return value) */
+.stack-frame-pro.frame-returning {
+    border-color: var(--success);
+    background: var(--success-bg);
+    box-shadow: 0 2px 8px rgba(34, 197, 94, 0.2);
+    animation: frame-return-pulse 400ms ease;
+}
+
+@keyframes frame-return-pulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.01);
+    }
+}
+
+/* Waiting frame (on stack but not active) */
+.stack-frame-pro.frame-waiting {
+    opacity: 0.65;
+    background: var(--bg-primary);
+    border-color: var(--border);
+}
+
+/* Frame left section - function call and locals */
+.frame-left {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.frame-function {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+.stack-frame-pro.frame-active .frame-function {
+    color: var(--accent);
+}
+
+.stack-frame-pro.frame-returning .frame-function {
+    color: var(--success);
+}
+
+.stack-frame-pro.frame-waiting .frame-function {
+    color: var(--text-secondary);
+}
+
+/* Locals display (compact inline) */
+.frame-locals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.frame-local-item {
+    color: var(--text-secondary);
+    font-size: 10px;
+}
+
+.stack-frame-pro.frame-waiting .frame-locals {
+    opacity: 0.6;
+}
+
+/* Frame right section - return value */
+.frame-right {
+    flex-shrink: 0;
+    margin-left: 12px;
+}
+
+.frame-return {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background: var(--success-bg);
+    border: 1.5px solid var(--success);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    animation: return-value-appear 350ms ease;
+}
+
+@keyframes return-value-appear {
+    0% {
+        opacity: 0;
+        transform: translateX(10px) scale(0.9);
+    }
+    60% {
+        transform: translateX(-2px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+}
+
+.return-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--success);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.return-value {
+    font-weight: 700;
+    color: var(--success);
+}
+
+/* Frame status badges */
+.frame-badge {
+    position: absolute;
+    top: -8px;
+    right: 12px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 2px 7px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.badge-active {
+    background: var(--accent);
+    color: white;
+    animation: badge-pulse 2s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
     0%, 100% {
         opacity: 1;
     }
     50% {
-        opacity: 0.9;
+        opacity: 0.8;
     }
 }
 
-.recursion-node.active .recursion-node-box {
-    animation: recursion-node-pulse 2s ease-in-out infinite;
+.badge-returning {
+    background: var(--success);
+    color: white;
 }
 
-/* Returned node (completed) - only color transition */
-.recursion-node.returned .recursion-node-box {
-    fill: var(--success-bg);
-    stroke: var(--success);
-    stroke-width: 2;
+/* Stack direction labels */
+.stack-viz-labels {
+    position: absolute;
+    left: -45px;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 20px 0;
 }
 
-/* Node text - function name and args - only animate fill color */
-.recursion-node-title {
-    fill: var(--text-primary);
-    font-family: var(--font-mono);
+.stack-label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-muted);
+}
+
+.label-arrow {
+    font-size: 20px;
+    line-height: 1;
+}
+
+.label-text {
+    font-size: 9px;
     font-weight: 700;
-    pointer-events: none;
-    transition: fill 200ms ease;
-    user-select: none;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 }
 
-.recursion-node.active .recursion-node-title {
-    fill: var(--accent);
-    font-weight: 800;
+.stack-label-top {
+    color: var(--accent);
 }
 
-.recursion-node.returned .recursion-node-title {
-    fill: var(--success);
+.stack-label-bottom {
+    color: var(--border-light);
 }
 
-/* Return value text - only animate opacity */
-.recursion-node-return {
-    fill: var(--text-secondary);
-    font-family: var(--font-mono);
-    font-weight: 600;
-    pointer-events: none;
-    user-select: none;
+/* Empty state */
+.stack-viz-empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
 }
 
-.recursion-node.returned .recursion-node-return {
-    fill: var(--success);
-    font-weight: 700;
-    animation: return-value-appear 300ms ease;
-}
-
-/* Return value appearance - only opacity, no transform */
-@keyframes return-value-appear {
-    0% {
-        opacity: 0;
-    }
-    100% {
-        opacity: 1;
-    }
-}
-
-/* Node hover effect - subtle, no movement */
-.recursion-node:hover .recursion-node-box {
-    stroke: var(--accent);
-    filter: drop-shadow(0 2px 8px rgba(59,130,246,.2));
-}
-
-/* Responsive adjustments for mobile */
+/* Responsive - Mobile */
 @media (max-width: 639px) {
-    .recursion-tree-wrap {
-        padding: 0;
+    .stack-viz-header {
+        padding: 8px 12px;
+        gap: 10px;
     }
-    
-    .recursion-controls {
-        top: 8px;
-        right: 8px;
-        gap: 4px;
-        padding: 2px;
-    }
-    
-    .recursion-control-btn {
-        width: 28px;
-        height: 28px;
-        font-size: 14px;
-    }
-    
-    .recursion-zoom-label {
+
+    .stack-viz-metric {
         font-size: 10px;
-        min-width: 40px;
-        padding: 0 4px;
     }
-    
-    .recursion-node-title {
-        font-size: 11px;
+
+    .metric-value {
+        font-size: 12px;
     }
-    
-    .recursion-node-return {
-        font-size: 9px;
+
+    .memory-bar-container {
+        width: 50px;
+    }
+
+    .stack-viz-indicators {
+        display: none; /* Hide on mobile for space */
+    }
+
+    .stack-viz-container {
+        padding: 12px;
+        max-height: 400px;
+    }
+
+    .stack-viz-frames {
+        max-width: 100%;
+    }
+
+    .stack-frame-pro {
+        padding: 8px 10px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+
+    .frame-right {
+        margin-left: 0;
+        align-self: flex-end;
+    }
+
+    .frame-function {
+        font-size: 12px !important;
+    }
+
+    .frame-locals {
+        font-size: 10px !important;
+        gap: 6px;
+    }
+
+    .frame-return {
+        font-size: 10px !important;
+        padding: 3px 8px;
+    }
+
+    .frame-badge {
+        top: -7px;
+        right: 8px;
+        font-size: 7px;
+        padding: 2px 6px;
+    }
+
+    .stack-viz-labels {
+        display: none; /* Hide labels on mobile */
     }
 }
 
-/* Tablet adjustments */
+/* Responsive - Tablet */
 @media (min-width: 640px) and (max-width: 1023px) {
-    .recursion-tree-wrap {
-        padding: 0;
+    .stack-viz-header {
+        padding: 9px 14px;
     }
-    
-    .recursion-controls {
-        gap: 5px;
+
+    .memory-bar-container {
+        width: 60px;
+    }
+
+    .stack-viz-container {
+        padding: 14px;
+    }
+
+    .stack-frame-pro {
+        padding: 9px 12px;
+    }
+
+    .stack-viz-labels {
+        left: -40px;
+    }
+}
+
+/* Desktop - optimal spacing */
+@media (min-width: 1024px) {
+    .stack-viz-frames {
+        max-width: 650px;
     }
 }
 
