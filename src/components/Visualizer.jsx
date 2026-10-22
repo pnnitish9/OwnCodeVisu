@@ -354,6 +354,318 @@ function ArrayViz({ heapObj, varName, locals, prevHeapObj, onHeapClick }) {
 }
 
 /* ================================================================
+   MATRIX 2D VIZ  (grid layout with row/column indices)
+   ================================================================ */
+function Matrix2DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapState }) {
+  const dimensions = heapObj.dimensions || []
+  const [rows, cols] = dimensions
+  
+  if (!rows || !cols) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>invalid matrix dimensions</div>
+  }
+
+  // Build 2D grid from heap structure
+  const matrix = useMemo(() => {
+    const grid = []
+    const outerElements = heapObj.elements || []
+    
+    for (let i = 0; i < Math.min(rows, outerElements.length); i++) {
+      const rowElement = outerElements[i]
+      if (rowElement?.type === 'ref') {
+        const rowHeapObj = heapState[String(rowElement.heap_id)]
+        if (rowHeapObj?.elements) {
+          grid.push(rowHeapObj.elements.slice(0, cols))
+        } else {
+          grid.push([])
+        }
+      } else {
+        grid.push([])
+      }
+    }
+    return grid
+  }, [heapObj, heapState, rows, cols])
+
+  // Build previous matrix for change detection
+  const prevMatrix = useMemo(() => {
+    if (!prevHeapObj?.elements) return []
+    const grid = []
+    const prevOuterElements = prevHeapObj.elements || []
+    const prevHeapState = {} // We'll need to pass this from parent
+    
+    for (let i = 0; i < Math.min(rows, prevOuterElements.length); i++) {
+      const rowElement = prevOuterElements[i]
+      if (rowElement?.type === 'ref') {
+        const rowHeapObj = heapState[String(rowElement.heap_id)]
+        if (rowHeapObj?.elements) {
+          grid.push(rowHeapObj.elements.slice(0, cols))
+        } else {
+          grid.push([])
+        }
+      } else {
+        grid.push([])
+      }
+    }
+    return grid
+  }, [prevHeapObj, heapState, rows, cols])
+
+  // Detect 2D pointer patterns (i, j) or (row, col)
+  const matrixPointers = useMemo(() => {
+    const pointers = []
+    
+    // Check for i, j pattern
+    const i = locals?.i
+    const j = locals?.j
+    if (i && j) {
+      const iVal = numVal(i)
+      const jVal = numVal(j)
+      if (iVal != null && jVal != null && iVal >= 0 && iVal < rows && jVal >= 0 && jVal < cols) {
+        pointers.push({ row: iVal, col: jVal, name: '[i][j]', colorIdx: 0 })
+      }
+    }
+    
+    // Check for row, col pattern
+    const row = locals?.row
+    const col = locals?.col
+    if (row && col) {
+      const rowVal = numVal(row)
+      const colVal = numVal(col)
+      if (rowVal != null && colVal != null && rowVal >= 0 && rowVal < rows && colVal >= 0 && colVal < cols) {
+        pointers.push({ row: rowVal, col: colVal, name: '[row][col]', colorIdx: 1 })
+      }
+    }
+    
+    // Check for r, c pattern
+    const r = locals?.r
+    const c = locals?.c
+    if (r && c) {
+      const rVal = numVal(r)
+      const cVal = numVal(c)
+      if (rVal != null && cVal != null && rVal >= 0 && rVal < rows && cVal >= 0 && cVal < cols) {
+        pointers.push({ row: rVal, col: cVal, name: '[r][c]', colorIdx: 2 })
+      }
+    }
+    
+    return pointers
+  }, [locals, rows, cols])
+
+  // Build pointer map for quick lookup
+  const pointerMap = useMemo(() => {
+    const map = {}
+    for (const ptr of matrixPointers) {
+      const key = `${ptr.row},${ptr.col}`
+      if (!map[key]) map[key] = []
+      map[key].push(ptr)
+    }
+    return map
+  }, [matrixPointers])
+
+  // Detect changed cells
+  const changedCells = useMemo(() => {
+    const changed = new Set()
+    for (let i = 0; i < Math.min(matrix.length, prevMatrix.length); i++) {
+      for (let j = 0; j < Math.min(matrix[i]?.length || 0, prevMatrix[i]?.length || 0); j++) {
+        const curVal = String(matrix[i]?.[j]?.value ?? '')
+        const prevVal = String(prevMatrix[i]?.[j]?.value ?? '')
+        if (curVal !== prevVal) {
+          changed.add(`${i},${j}`)
+        }
+      }
+    }
+    return changed
+  }, [matrix, prevMatrix])
+
+  return (
+    <div className="matrix-2d-wrap">
+      <div className="matrix-2d-container">
+        {/* Column headers */}
+        <div className="matrix-2d-grid" style={{ gridTemplateColumns: `40px repeat(${cols}, 50px)` }}>
+          <div className="matrix-corner-cell"></div>
+          {Array.from({ length: cols }, (_, j) => (
+            <div key={`col-${j}`} className="matrix-header-cell">
+              {j}
+            </div>
+          ))}
+          
+          {/* Rows with data */}
+          {matrix.map((row, i) => (
+            <React.Fragment key={`row-${i}`}>
+              {/* Row header */}
+              <div className="matrix-header-cell">{i}</div>
+              
+              {/* Row cells */}
+              {Array.from({ length: cols }, (_, j) => {
+                const cell = row[j]
+                const cellKey = `${i},${j}`
+                const cellPtrs = pointerMap[cellKey] || []
+                const isRef = cell?.type === 'ref'
+                const val = !cell ? '—' : isRef ? `→${cell.heap_id}` : String(cell.value ?? '')
+                
+                let highlight = ''
+                if (changedCells.has(cellKey)) highlight = 'changed'
+                else if (cellPtrs.length > 0) {
+                  const minColor = Math.min(...cellPtrs.map(p => p.colorIdx))
+                  highlight = ['ptr-primary', 'ptr-secondary', 'ptr-tertiary'][minColor]
+                } else if (isRef) highlight = 'ref'
+                
+                return (
+                  <div
+                    key={`cell-${i}-${j}`}
+                    className={`matrix-cell ${highlight}`}
+                    onClick={isRef ? () => onHeapClick(cell.heap_id) : undefined}
+                    style={isRef ? { cursor: 'pointer' } : {}}
+                  >
+                    {cellPtrs.length > 0 && (
+                      <div className="matrix-cell-pointer-badge">
+                        {cellPtrs[0].name}
+                      </div>
+                    )}
+                    <span className="matrix-cell-value">{val}</span>
+                  </div>
+                )
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+      <div className="matrix-dimensions-label">{rows} × {cols} matrix</div>
+    </div>
+  )
+}
+
+/* ================================================================
+   MATRIX 3D VIZ  (layered matrices with depth indicator)
+   ================================================================ */
+function Matrix3DViz({ heapObj, varName, locals, prevHeapObj, onHeapClick, heapState }) {
+  const dimensions = heapObj.dimensions || []
+  const [depth, rows, cols] = dimensions
+  
+  if (!depth || !rows || !cols) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>invalid 3D matrix dimensions</div>
+  }
+
+  // Build 3D array from heap structure
+  const matrix3d = useMemo(() => {
+    const cube = []
+    const outerElements = heapObj.elements || []
+    
+    for (let d = 0; d < Math.min(depth, outerElements.length); d++) {
+      const depthElement = outerElements[d]
+      const layer = []
+      
+      if (depthElement?.type === 'ref') {
+        const depthHeapObj = heapState[String(depthElement.heap_id)]
+        if (depthHeapObj?.elements) {
+          for (let i = 0; i < Math.min(rows, depthHeapObj.elements.length); i++) {
+            const rowElement = depthHeapObj.elements[i]
+            if (rowElement?.type === 'ref') {
+              const rowHeapObj = heapState[String(rowElement.heap_id)]
+              if (rowHeapObj?.elements) {
+                layer.push(rowHeapObj.elements.slice(0, cols))
+              } else {
+                layer.push([])
+              }
+            } else {
+              layer.push([])
+            }
+          }
+        }
+      }
+      cube.push(layer)
+    }
+    return cube
+  }, [heapObj, heapState, depth, rows, cols])
+
+  // Detect 3D pointer patterns (i, j, k) or (d, r, c)
+  const matrixPointers = useMemo(() => {
+    const pointers = []
+    
+    // Check for i, j, k pattern
+    const i = locals?.i
+    const j = locals?.j
+    const k = locals?.k
+    if (i && j && k) {
+      const iVal = numVal(i)
+      const jVal = numVal(j)
+      const kVal = numVal(k)
+      if (iVal != null && jVal != null && kVal != null && 
+          iVal >= 0 && iVal < depth && jVal >= 0 && jVal < rows && kVal >= 0 && kVal < cols) {
+        pointers.push({ depth: iVal, row: jVal, col: kVal, name: '[i][j][k]', colorIdx: 0 })
+      }
+    }
+    
+    return pointers
+  }, [locals, depth, rows, cols])
+
+  // Build pointer map for quick lookup
+  const pointerMap = useMemo(() => {
+    const map = {}
+    for (const ptr of matrixPointers) {
+      const key = `${ptr.depth},${ptr.row},${ptr.col}`
+      if (!map[key]) map[key] = []
+      map[key].push(ptr)
+    }
+    return map
+  }, [matrixPointers])
+
+  return (
+    <div className="matrix-3d-wrap">
+      {matrix3d.map((layer, d) => (
+        <div key={`layer-${d}`} className="matrix-3d-layer">
+          <div className="matrix-3d-layer-label">Layer {d}</div>
+          <div className="matrix-2d-container">
+            <div className="matrix-2d-grid" style={{ gridTemplateColumns: `40px repeat(${cols}, 50px)` }}>
+              <div className="matrix-corner-cell"></div>
+              {Array.from({ length: cols }, (_, j) => (
+                <div key={`col-${j}`} className="matrix-header-cell">
+                  {j}
+                </div>
+              ))}
+              
+              {layer.map((row, i) => (
+                <React.Fragment key={`row-${i}`}>
+                  <div className="matrix-header-cell">{i}</div>
+                  
+                  {Array.from({ length: cols }, (_, j) => {
+                    const cell = row[j]
+                    const cellKey = `${d},${i},${j}`
+                    const cellPtrs = pointerMap[cellKey] || []
+                    const isRef = cell?.type === 'ref'
+                    const val = !cell ? '—' : isRef ? `→${cell.heap_id}` : String(cell.value ?? '')
+                    
+                    let highlight = ''
+                    if (cellPtrs.length > 0) {
+                      const minColor = Math.min(...cellPtrs.map(p => p.colorIdx))
+                      highlight = ['ptr-primary', 'ptr-secondary', 'ptr-tertiary'][minColor]
+                    } else if (isRef) highlight = 'ref'
+                    
+                    return (
+                      <div
+                        key={`cell-${i}-${j}`}
+                        className={`matrix-cell ${highlight}`}
+                        onClick={isRef ? () => onHeapClick(cell.heap_id) : undefined}
+                        style={isRef ? { cursor: 'pointer' } : {}}
+                      >
+                        {cellPtrs.length > 0 && (
+                          <div className="matrix-cell-pointer-badge">
+                            {cellPtrs[0].name}
+                          </div>
+                        )}
+                        <span className="matrix-cell-value">{val}</span>
+                      </div>
+                    )
+                  })}
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
+      <div className="matrix-dimensions-label">{depth} × {rows} × {cols} matrix (3D)</div>
+    </div>
+  )
+}
+
+/* ================================================================
    STACK VIZ  (vertical, top at top)
    ================================================================ */
 function StackViz({ heapObj }) {
@@ -897,13 +1209,50 @@ export default function Visualizer({ onHeapClick }) {
         </Section>
       )}
 
-      {/* Smart array / stack / queue diagrams */}
+      {/* Smart array / stack / queue / matrix diagrams */}
       {listVars.map(([name, val]) => {
         const heapId  = String(val.heap_ref)
         const heapObj = heapState[heapId]
         if (!heapObj?.elements) return null
         const prevObj = prevHeapState[heapId]
         const role    = detectListRole(name, heapObj)
+
+        // Check if it's a matrix (2D or 3D array)
+        if (heapObj.is_matrix && heapObj.dimensions) {
+          const dims = heapObj.dimensions
+          
+          // 3D Matrix
+          if (dims.length === 3) {
+            return (
+              <Section key={name} icon={Layers} title={`3D Matrix — ${name}`}>
+                <Matrix3DViz
+                  heapObj={heapObj}
+                  varName={name}
+                  locals={locals}
+                  prevHeapObj={prevObj}
+                  onHeapClick={onHeapClick}
+                  heapState={heapState}
+                />
+              </Section>
+            )
+          }
+          
+          // 2D Matrix
+          if (dims.length === 2) {
+            return (
+              <Section key={name} icon={Grid3x3} title={`2D Matrix — ${name}`}>
+                <Matrix2DViz
+                  heapObj={heapObj}
+                  varName={name}
+                  locals={locals}
+                  prevHeapObj={prevObj}
+                  onHeapClick={onHeapClick}
+                  heapState={heapState}
+                />
+              </Section>
+            )
+          }
+        }
 
         if (role === 'stack') {
           return (
