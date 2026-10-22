@@ -1459,7 +1459,7 @@ function TreeViz({ heapState, rootId, locals }) {
 }
 
 /* ================================================================
-   LINKED LIST  (enhanced with active node)
+   LINKED LIST  (simplified with direct node highlighting only)
    ================================================================ */
 function LinkedListViz({ heapState, locals }) {
   // Find the head node
@@ -1477,16 +1477,7 @@ function LinkedListViz({ heapState, locals }) {
   const roots = entries.filter(([id]) => !referenced.has(String(id)))
   const start = roots.length ? roots[0] : entries[0]
 
-  // Active node: "current" / "cur" / "node" variable
-  const activeNodeRef = useMemo(() => {
-    for (const [vname, val] of Object.entries(locals || {})) {
-      if (['current', 'cur', 'node', 'temp', 'p', 'ptr'].includes(vname) && val?.heap_ref != null) {
-        return val.heap_ref
-      }
-    }
-    return null
-  }, [locals])
-
+  // Build the linked list chain
   const visited = new Set()
   const chain   = []
   let cur = start
@@ -1499,20 +1490,47 @@ function LinkedListViz({ heapState, locals }) {
       : null
   }
 
+  // Determine node highlight based on pointer variables
+  const getNodeHighlight = (nodeId) => {
+    for (const [varName, val] of Object.entries(locals || {})) {
+      if (val?.heap_ref === nodeId) {
+        const name = varName.toLowerCase()
+        // Priority: current > prev > next > head
+        if (name === 'current' || name === 'curr' || name === 'cur') {
+          return 'current' // Green
+        } else if (name === 'prev' || name === 'previous') {
+          return 'prev' // Red
+        } else if (name === 'next') {
+          return 'next' // Blue
+        } else if (name === 'head') {
+          return 'head' // Neutral with accent
+        }
+      }
+    }
+    return null
+  }
+
   return (
-    <div className="linked-list-viz">
+    <div className="linked-list-container">
       {chain.map(([id, obj]) => {
         const valAttr  = (obj.attributes || []).find(a => a.type !== 'ref')
         const val      = valAttr ? String(valAttr.value ?? '') : id
         const ptrLabel = (obj.attributes || []).find(a => a.type === 'ref')?.name || 'next'
-        const isActive = Number(id) === activeNodeRef
+        const highlight = getNodeHighlight(Number(id))
+        
+        let nodeClass = 'll-node'
+        if (highlight === 'current') nodeClass += ' ll-highlight-current'
+        else if (highlight === 'prev') nodeClass += ' ll-highlight-prev'
+        else if (highlight === 'next') nodeClass += ' ll-highlight-next'
+        else if (highlight === 'head') nodeClass += ' ll-highlight-head'
+        
         return (
           <React.Fragment key={id}>
-            <div className={`ll-node${isActive ? ' active-node' : ''}`}>
+            <div className={nodeClass}>
               <div className="ll-node-data">{val}</div>
               <div className="ll-node-ptr">{ptrLabel}</div>
             </div>
-            <div className="ll-arrow">→</div>
+            <div className="ll-connector">→</div>
           </React.Fragment>
         )
       })}

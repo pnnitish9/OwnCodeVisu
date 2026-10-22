@@ -1190,75 +1190,196 @@
     100% { r: 18; opacity: 1; }
 }
 
-/* ---- Linked list ---------------------------------------------------- */
-.linked-list-viz {
+/* ================================================================
+   LINKED LIST - Simplified with Direct Node Highlighting
+   current=green, prev=red, next=blue
+   ================================================================ */
+
+.linked-list-container {
     display: flex;
     align-items: center;
     gap: 0;
+    padding: 16px;
     overflow-x: auto;
-    padding: 8px 0 4px;
-    flex-wrap: nowrap;
+    background: var(--bg-editor);
+    border-radius: 8px;
 }
 
+/* Linked list node */
 .ll-node {
     display: flex;
-    align-items: stretch;
+    flex-direction: column;
     border: 2px solid var(--border-light);
     border-radius: 8px;
     overflow: hidden;
     flex-shrink: 0;
-    background: var(--bg-editor);
-    animation: ll-node-appear 300ms ease;
-    transition: border-color 200ms;
-}
-.ll-node.active-node {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
+    background: var(--bg-card);
+    min-width: 90px;
+    transition: all 300ms ease;
+    animation: node-appear 350ms ease-out;
+    position: relative;
 }
 
-@keyframes ll-node-appear {
-    0%   { transform: scale(0.85); opacity: 0; }
-    100% { transform: scale(1);    opacity: 1; }
+@keyframes node-appear {
+    0% {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Node highlighting - Direct color coding by pointer role */
+.ll-highlight-current {
+    background: #10b981 !important; /* Green for current */
+    border-color: #059669 !important;
+    border-width: 3px !important;
+    box-shadow: 0 0 16px rgba(16, 185, 129, 0.5) !important;
+}
+
+.ll-highlight-current .ll-node-data,
+.ll-highlight-current .ll-node-ptr {
+    color: white !important;
+    font-weight: 700 !important;
+}
+
+.ll-highlight-prev {
+    background: #ef4444 !important; /* Red for prev */
+    border-color: #dc2626 !important;
+    border-width: 3px !important;
+    box-shadow: 0 0 16px rgba(239, 68, 68, 0.5) !important;
+}
+
+.ll-highlight-prev .ll-node-data,
+.ll-highlight-prev .ll-node-ptr {
+    color: white !important;
+    font-weight: 700 !important;
+}
+
+.ll-highlight-next {
+    background: #3b82f6 !important; /* Blue for next */
+    border-color: #2563eb !important;
+    border-width: 3px !important;
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.5) !important;
+}
+
+.ll-highlight-next .ll-node-data,
+.ll-highlight-next .ll-node-ptr {
+    color: white !important;
+    font-weight: 700 !important;
+}
+
+.ll-highlight-head {
+    background: #8b5cf6 !important; /* Purple for head */
+    border-color: #7c3aed !important;
+    border-width: 3px !important;
+    box-shadow: 0 0 16px rgba(139, 92, 246, 0.5) !important;
+}
+
+.ll-highlight-head .ll-node-data,
+.ll-highlight-head .ll-node-ptr {
+    color: white !important;
+    font-weight: 700 !important;
 }
 
 .ll-node-data {
-    padding: 8px 14px;
+    padding: 12px 16px;
     font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 700;
     color: var(--text-primary);
-    border-right: 1px solid var(--border-light);
-    min-width: 40px;
     text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 50px;
 }
 
 .ll-node-ptr {
-    padding: 8px 10px;
-    font-size: 10px;
+    padding: 8px 12px;
+    font-size: 11px;
     color: var(--text-muted);
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--bg-primary);
+    font-weight: 600;
+    border-top: 1px solid var(--border-light);
 }
 
-.ll-arrow {
+/* Connector arrow between nodes */
+.ll-connector {
     display: flex;
     align-items: center;
-    padding: 0 6px;
+    padding: 0 12px;
     color: var(--accent);
-    font-size: 18px;
+    font-size: 22px;
+    font-weight: 700;
     flex-shrink: 0;
 }
 
+/* Null terminator */
 .ll-null {
-    padding: 8px 12px;
+    padding: 12px 16px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 14px;
+    font-weight: 600;
     color: var(--text-muted);
-    border: 1px dashed var(--border-light);
+    border: 2px dashed var(--border-light);
     border-radius: 6px;
     flex-shrink: 0;
+    background: var(--bg-primary);
+}
+
+/* Responsive - Mobile */
+@media (max-width: 639px) {
+    .linked-list-container {
+        padding: 12px;
+    }
+
+    .ll-node {
+        min-width: 75px;
+    }
+
+    .ll-node-data {
+        padding: 10px 12px;
+        font-size: 14px;
+        min-height: 42px;
+    }
+
+    .ll-node-ptr {
+        padding: 6px 10px;
+        font-size: 9px;
+    }
+
+    .ll-connector {
+        padding: 0 8px;
+        font-size: 18px;
+    }
+
+    .ll-null {
+        padding: 10px 12px;
+        font-size: 12px;
+    }
+}
+
+/* Responsive - Tablet */
+@media (min-width: 640px) and (max-width: 1023px) {
+    .ll-node {
+        min-width: 85px;
+    }
+
+    .ll-node-data {
+        font-size: 15px;
+        padding: 11px 14px;
+    }
+
+    .ll-connector {
+        font-size: 20px;
+        padding: 0 10px;
+    }
 }
 
 /* ---- Dict / set entries --------------------------------------------- */
