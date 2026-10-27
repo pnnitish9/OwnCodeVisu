@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react'
 import { AppProvider, useApp, FILE_EXT } from './context/AppContext'
-import { checkHealth, fetchLanguagesInfo, postTrace, NetworkIssue } from './api/client'
+import { checkHealth, fetchLanguagesInfo, postTrace, reconstructHeapSnapshots, NetworkIssue } from './api/client'
 import Header from './components/Header'
 import Editor from './components/Editor'
 import Controls from './components/Controls'
@@ -98,7 +98,13 @@ function AppInner() {
         return
       }
 
-      const data = body.data
+      let data = body.data
+      
+      // Reconstruct heap snapshots if smart snapshots are enabled
+      if (data.smart_snapshots_enabled) {
+        data = reconstructHeapSnapshots(data)
+      }
+      
       if (data.compiler_warnings?.length)
         dispatch({ type: 'SET_DIAGNOSTICS', diagnostics: data.compiler_warnings })
 

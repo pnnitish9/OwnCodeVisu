@@ -1675,6 +1675,13 @@ export default function Visualizer({ onHeapClick }) {
   const heapState     = step.heap_state || {}
   const prevHeapState = prevStep?.heap_state || {}
   const locals        = step.stack_locals || {}
+  
+  // Check for truncation or optimization info to display banners
+  const showOptimizationInfo = traceData.smart_snapshots_enabled || traceData.step_sampling_applied
+  const isTruncated = traceData.truncated
+  const truncationInfo = isTruncated && step.exception_info?.category === traceData.truncation_reason 
+    ? step.exception_info 
+    : null
 
   // ---- Detect graph first (uses dict + heap) -------------------------
   const graphResult = detectGraph(heapState, locals)
@@ -1728,6 +1735,40 @@ export default function Visualizer({ onHeapClick }) {
     <div className="viz-grid">
       {/* Current executing line */}
       <CurrentLineBanner step={step} />
+      
+      {/* Optimization Info Banner */}
+      {showOptimizationInfo && !isTruncated && currentStep === 0 && (
+        <div className="viz-info-banner">
+          <span className="info-icon">ℹ️</span>
+          <div className="info-content">
+            <strong>Memory Optimizations Active</strong>
+            <div className="info-details">
+              {traceData.smart_snapshots_enabled && (
+                <span>• Smart snapshots enabled (full heap every {traceData.snapshot_interval} steps)</span>
+              )}
+              {traceData.step_sampling_applied && (
+                <span>• Step sampling applied for deep recursion (depth threshold: {traceData.max_recursion_depth})</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Truncation Warning Banner */}
+      {isTruncated && truncationInfo && (
+        <div className="viz-warning-banner">
+          <span className="warning-icon">⚠️</span>
+          <div className="warning-content">
+            <strong>Trace Truncated: {truncationInfo.category === 'step_limit' ? 'Step Limit Reached' : 'Timeout Exceeded'}</strong>
+            <div className="warning-message">{truncationInfo.message}</div>
+            {truncationInfo.context && truncationInfo.context.length > 0 && (
+              <div className="warning-context">
+                {truncationInfo.context.map((ctx, i) => <div key={i}>{ctx}</div>)}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Stack Space Visualization (if recursive functions detected) */}
       {isRecursive && callTree.length > 0 && (

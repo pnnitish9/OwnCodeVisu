@@ -39,12 +39,50 @@ export async function fetchLanguagesInfo(apiUrl) {
   return null
 }
 
-export async function postTrace(apiUrl, language, code, userInput) {
+export async function postTrace(apiUrl, language, code, userInput, limits = null) {
   const endpoint = language === 'python' ? '/api/python/trace' : '/api/cpp/trace'
   const timeout  = REQUEST_TIMEOUT_MS[language]
+  
+  const payload = { code, user_input: userInput }
+  
+  // Allow passing custom limits for complex programs
+  if (limits && language === 'python') {
+    payload.limits = limits
+  }
+  
   return apiFetch(apiUrl, endpoint, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ code, user_input: userInput }),
+    body:    JSON.stringify(payload),
   }, timeout)
+}
+
+/**
+ * Reconstruct full heap snapshots from differential snapshots.
+ * Smart snapshots store references to previous full snapshots to save memory.
+ */
+export function reconstructHeapSnapshots(traceData) {
+  if (!traceData?.smart_snapshots_enabled) {
+    return traceData // No reconstruction needed
+  }
+  
+  const steps = traceData.steps
+  let lastFullHeap = {}
+  
+  // Process each step and reconstruct heap state
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i]
+    
+    if (step.heap_state && typeof step.heap_state === 'object') {
+      if (step.heap_state._snapshot_ref !== undefined) {
+        // This is a reference - reuse the last full snapshot
+        step.heap_state = { ...lastFullHeap }
+      } else {
+        // This is a full snapshot - cache it
+        lastFullHeap = { ...step.heap_state }
+      }
+    }
+  }
+  
+  return traceData
 }
