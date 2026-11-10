@@ -2050,16 +2050,52 @@ function HeapSection({ heapState, prevHeapState, featuredIds, locals, onHeapClic
 
 /* ================================================================
    MAIN VISUALIZER
+   Four permanent sections always rendered in fixed order:
+   1. Current Executing Line
+   2. Data Structure Visualization  (stack space + detected DS)
+   3. Variables (Current Frame)
+   4. Console Output
    ================================================================ */
 export default function Visualizer({ onHeapClick }) {
   const { state } = useApp()
   const { traceData, currentStep } = state
 
+  // ── Empty / idle state ───────────────────────────────────────────
   if (!traceData || !traceData.steps.length) {
     return (
       <div className="viz-grid">
-        <div className="viz-empty">
-          <p>Paste your code and click <strong>Trace &amp; Visualize</strong> to see execution step by step.</p>
+        {/* Section 1 — placeholder */}
+        <div className="viz-section">
+          <div className="viz-section-header"><span>CURRENT LINE</span></div>
+          <div className="viz-section-body">
+            <div className="viz-empty"><p>Paste code and click <strong>Trace &amp; Visualize</strong></p></div>
+          </div>
+        </div>
+
+        {/* Section 2 — placeholder */}
+        <div className="viz-section">
+          <div className="viz-section-header"><span>DATA STRUCTURES</span></div>
+          <div className="viz-section-body">
+            <div className="viz-empty"><p>Visualizations will appear here during execution</p></div>
+          </div>
+        </div>
+
+        {/* Section 3 — placeholder */}
+        <div className="viz-section">
+          <div className="viz-section-header"><span>VARIABLES (CURRENT FRAME)</span></div>
+          <div className="viz-section-body">
+            <div className="viz-empty"><p>No variables</p></div>
+          </div>
+        </div>
+
+        {/* Section 4 — placeholder */}
+        <div className="viz-section">
+          <div className="viz-section-header"><Terminal size={13} /> <span>CONSOLE OUTPUT</span></div>
+          <div className="viz-section-body">
+            <div className="viz-output-box">
+              <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>(waiting for output…)</span>
+            </div>
+          </div>
         </div>
       </div>
     )
@@ -2072,69 +2108,51 @@ export default function Visualizer({ onHeapClick }) {
   const heapState     = step.heap_state || {}
   const prevHeapState = prevStep?.heap_state || {}
   const locals        = step.stack_locals || {}
-  
-  // Check for truncation or optimization info to display banners
-  const showOptimizationInfo = traceData.smart_snapshots_enabled || traceData.step_sampling_applied
-  const isTruncated = traceData.truncated
-  const truncationInfo = isTruncated && step.exception_info?.category === traceData.truncation_reason 
-    ? step.exception_info 
-    : null
 
-  // ---- Detect graph first (uses dict + heap) -------------------------
-  const graphResult = detectGraph(heapState, locals)
-  const graphAdj = graphResult?.adj || null
+  // ── Truncation / optimization banners ───────────────────────────
+  const isTruncated   = traceData.truncated
+  const truncationInfo = isTruncated && step.exception_info?.category === traceData.truncation_reason
+    ? step.exception_info : null
+
+  // ── Detect graph (excludes its IDs from DS panel) ────────────────
+  const graphResult    = detectGraph(heapState, locals)
+  const graphAdj       = graphResult?.adj || null
   const graphExcludeIds = graphResult?.excludeIds || new Set()
 
-  // ---- Find matrices first to identify their row heap IDs ------------
+  // ── Detect matrices (collect row IDs to exclude) ─────────────────
   const matrixVars = Object.entries(locals).filter(([name, val]) => {
     if (name.startsWith('__')) return false
     if (!val || val.heap_ref == null) return false
     const heapObj = heapState[String(val.heap_ref)]
-    // Only lists/tuples can be matrices (not deques or objects)
     return heapObj?.is_matrix && heapObj?.dimensions
   })
-
-  // Collect all matrix row heap IDs to exclude from separate display
   const matrixRowHeapIds = new Set()
   for (const [, val] of matrixVars) {
     const matrixObj = heapState[String(val.heap_ref)]
     if (matrixObj?.elements) {
       for (const el of matrixObj.elements) {
-        if (el.type === 'ref') {
-          matrixRowHeapIds.add(String(el.heap_id))
-        }
+        if (el.type === 'ref') matrixRowHeapIds.add(String(el.heap_id))
       }
     }
   }
 
-  // ---- Find list/tuple/object variables to feature as smart diagrams --------
-  // Collect everything that might be a DS: lists, tuples, dicts, objects.
-  // IMPORTANT: val.type is the formatter type, which is the Python class name for
-  // class instances (e.g. "Queue", "Stack") and "deque" for collections.deque.
-  // We must look at the heap object's type, not val.type, to handle these correctly.
+  // ── Build dsVars ─────────────────────────────────────────────────
   const dsVars = Object.entries(locals).filter(([name, val]) => {
     if (name.startsWith('__')) return false
     if (!val || val.heap_ref == null) return false
-    // skip matrix rows
     if (matrixRowHeapIds.has(String(val.heap_ref))) return false
-    // Look at heap object type for the ground truth
     const heapObj = heapState[String(val.heap_ref)]
     if (!heapObj) return false
     const ht = heapObj.type
-    // list, tuple, deque: has .elements  → array/stack/queue candidates
-    // dict: has .entries                 → hashtable candidate
-    // object: class instance             → extract inner DS
     return ht === 'list' || ht === 'tuple' || ht === 'deque' || ht === 'dict' || ht === 'object'
   })
 
+  // ── featuredIds keeps HeapSection clean ──────────────────────────
   const featuredIds = new Set([
     ...dsVars.map(([, v]) => String(v.heap_ref)),
     ...matrixRowHeapIds,
     ...graphExcludeIds,
   ])
-  // Also exclude inner objects extracted from class instances so they don't
-  // appear again in the generic HeapSection after being shown in their DS panel.
-  // We walk all ref attributes of each instance and add their heap IDs.
   for (const [, val] of dsVars) {
     const rawObj = heapState[String(val.heap_ref)]
     if (rawObj?.type === 'object') {
@@ -2144,201 +2162,207 @@ export default function Visualizer({ onHeapClick }) {
     }
   }
 
-  // ---- Detect recursion -----------------------------------------------
+  // ── Recursion detection ──────────────────────────────────────────
   const callTree = traceData.call_tree || []
   const { isRecursive, recursiveFunctions } = useMemo(
     () => detectRecursion(callTree),
     [callTree]
   )
 
+  // ── Build the DS panel content list ─────────────────────────────
+  // Each item is a rendered Section node. We collect them first,
+  // then decide whether to show an empty-state fallback.
+  const dsSections = []
+
+  // A) Recursion stack space (always first when present)
+  if (isRecursive && callTree.length > 0) {
+    dsSections.push(
+      <Section key="__stackspace" icon={Layers} title={`Stack Space — ${[...recursiveFunctions].join(', ')}`}>
+        <StackSpaceViz
+          callTree={callTree}
+          currentStep={currentStep}
+          heapState={heapState}
+          locals={locals}
+        />
+      </Section>
+    )
+  }
+
+  // B) Graph
+  if (graphAdj) {
+    dsSections.push(
+      <Section key="__graph" icon={BarChart2} title="Graph Visualization">
+        <GraphViz adj={graphAdj} locals={locals} />
+      </Section>
+    )
+  }
+
+  // C) All dsVars in stable order
+  for (const [name, val] of dsVars) {
+    const heapId  = String(val.heap_ref)
+    const rawObj  = heapState[heapId]
+    if (!rawObj) continue
+
+    const prevRawObj = prevHeapState[heapId]
+    const rawType    = rawObj.type
+
+    // class instance → extract inner DS
+    if (rawType === 'object') {
+      const extracted = extractDSFromInstance(rawObj, heapState)
+      if (!extracted) continue
+      const { innerObj, role } = extracted
+      const prevExtracted = prevRawObj ? extractDSFromInstance(prevRawObj, prevHeapState) : null
+      const prevInner = prevExtracted?.innerObj || null
+
+      if (role === 'hashtable') {
+        dsSections.push(
+          <Section key={name} icon={Database} title={`Hash Table — ${name}`}>
+            <HashTableViz heapObj={innerObj} varName={name} locals={locals} prevHeapObj={prevInner} heapState={heapState} prevHeapState={prevHeapState} instanceObj={rawObj} />
+          </Section>
+        )
+      } else if (role === 'queue') {
+        dsSections.push(
+          <Section key={name} icon={AlignJustify} title={`Queue — ${name}`}>
+            <QueueViz heapObj={innerObj} prevHeapObj={prevInner} />
+          </Section>
+        )
+      } else if (role === 'stack') {
+        dsSections.push(
+          <Section key={name} icon={List} title={`Stack — ${name}`}>
+            <StackViz heapObj={innerObj} prevHeapObj={prevInner} />
+          </Section>
+        )
+      }
+      continue
+    }
+
+    // bare dict → map/hashtable
+    if (rawType === 'dict') {
+      if (graphExcludeIds.has(heapId)) continue
+      dsSections.push(
+        <Section key={name} icon={Database} title={`Map — ${name}`}>
+          <HashTableViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} heapState={heapState} prevHeapState={prevHeapState} />
+        </Section>
+      )
+      continue
+    }
+
+    // bare list / tuple / deque
+    if (!rawObj.elements) continue
+
+    // matrix?
+    if (rawObj.is_matrix && rawObj.dimensions) {
+      const dims = rawObj.dimensions
+      if (dims.length === 3) {
+        dsSections.push(
+          <Section key={name} icon={Layers} title={`3D Matrix — ${name}`}>
+            <Matrix3DViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} heapState={heapState} />
+          </Section>
+        )
+      } else if (dims.length === 2) {
+        dsSections.push(
+          <Section key={name} icon={Grid3x3} title={`2D Matrix — ${name}`}>
+            <Matrix2DViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} heapState={heapState} matrixHeapId={heapId} />
+          </Section>
+        )
+      }
+      continue
+    }
+
+    const role = detectListRole(name, rawObj)
+    if (role === 'stack') {
+      dsSections.push(
+        <Section key={name} icon={List} title={`Stack — ${name}`}>
+          <StackViz heapObj={rawObj} prevHeapObj={prevRawObj} />
+        </Section>
+      )
+    } else if (role === 'queue') {
+      dsSections.push(
+        <Section key={name} icon={AlignJustify} title={`Queue — ${name}`}>
+          <QueueViz heapObj={rawObj} prevHeapObj={prevRawObj} />
+        </Section>
+      )
+    } else {
+      dsSections.push(
+        <Section key={name} icon={Grid3x3} title={`Array — ${name}`}>
+          <ArrayViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} />
+        </Section>
+      )
+    }
+  }
+
+  // D) Heap-resident structures (linked list, binary tree) that have no local variable
+  const remaining = Object.fromEntries(
+    Object.entries(heapState).filter(([id]) => !featuredIds.has(id))
+  )
+  if (Object.keys(remaining).length) {
+    const treeRootId = detectBinaryTree(remaining)
+    if (treeRootId) {
+      dsSections.push(
+        <Section key="__tree" icon={Grid3x3} title="Binary Tree">
+          <TreeViz heapState={remaining} rootId={treeRootId} locals={locals} />
+        </Section>
+      )
+    } else if (isLinkedListHeap(remaining)) {
+      dsSections.push(
+        <Section key="__ll" icon={Link2} title="Linked List — Memory Diagram">
+          <LinkedListViz heapState={remaining} locals={locals} />
+        </Section>
+      )
+    }
+  }
+
   return (
     <div className="viz-grid">
-      {/* Current executing line */}
+
+      {/* ── SECTION 1: Current Executing Line (always visible) ── */}
       <CurrentLineBanner step={step} />
-      
-      {/* Optimization Info Banner */}
-      {showOptimizationInfo && !isTruncated && currentStep === 0 && (
-        <div className="viz-info-banner">
-          <span className="info-icon">ℹ️</span>
-          <div className="info-content">
-            <strong>Memory Optimizations Active</strong>
-            <div className="info-details">
-              {traceData.smart_snapshots_enabled && (
-                <span>• Smart snapshots enabled (full heap every {traceData.snapshot_interval} steps)</span>
-              )}
-              {traceData.step_sampling_applied && (
-                <span>• Step sampling applied for deep recursion (depth threshold: {traceData.max_recursion_depth})</span>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Truncation Warning Banner */}
+
+      {/* Truncation / optimization banners (inline, not a separate section) */}
       {isTruncated && truncationInfo && (
         <div className="viz-warning-banner">
           <span className="warning-icon">⚠️</span>
           <div className="warning-content">
-            <strong>Trace Truncated: {truncationInfo.category === 'step_limit' ? 'Step Limit Reached' : 'Timeout Exceeded'}</strong>
+            <strong>
+              {truncationInfo.category === 'step_limit' ? 'Step Limit Reached' : 'Timeout Exceeded'}
+            </strong>
             <div className="warning-message">{truncationInfo.message}</div>
-            {truncationInfo.context && truncationInfo.context.length > 0 && (
-              <div className="warning-context">
-                {truncationInfo.context.map((ctx, i) => <div key={i}>{ctx}</div>)}
-              </div>
-            )}
           </div>
         </div>
       )}
 
-      {/* Stack Space Visualization (if recursive functions detected) */}
-      {isRecursive && callTree.length > 0 && (
-        <Section icon={Layers} title={`Stack Space — ${[...recursiveFunctions].join(', ')}`}>
-          <StackSpaceViz 
-            callTree={callTree} 
-            currentStep={currentStep} 
-            heapState={heapState} 
-            locals={locals} 
-          />
-        </Section>
-      )}
-
-      {/* Graph (if detected) */}
-      {graphAdj && (
-        <Section icon={BarChart2} title="Graph Visualization">
-          <GraphViz adj={graphAdj} locals={locals} />
-        </Section>
-      )}
-
-      {/* Smart array / stack / queue / hashtable / matrix diagrams */}
-      {dsVars.map(([name, val]) => {
-        const heapId = String(val.heap_ref)
-        const rawObj = heapState[heapId]
-        if (!rawObj) return null
-
-        const prevRawObj = prevHeapState[heapId]
-        const rawType = rawObj.type  // 'list'|'tuple'|'deque'|'dict'|'object'
-
-        // ── A) class instance: extract inner DS ──────────────────────────
-        if (rawType === 'object') {
-          const extracted = extractDSFromInstance(rawObj, heapState)
-          if (!extracted) return null
-          const { innerObj, role } = extracted
-          const prevExtracted = prevRawObj ? extractDSFromInstance(prevRawObj, prevHeapState) : null
-          const prevInner = prevExtracted?.innerObj || null
-
-          if (role === 'hashtable') {
-            return (
-              <Section key={name} icon={Database} title={`Hash Table — ${name}`}>
-                <HashTableViz
-                  heapObj={innerObj}
-                  varName={name}
-                  locals={locals}
-                  prevHeapObj={prevInner}
-                  heapState={heapState}
-                  prevHeapState={prevHeapState}
-                  instanceObj={rawObj}
-                />
-              </Section>
+      {/* ── SECTION 2: Data Structure Visualization (always visible) ── */}
+      <div className="viz-section viz-section-ds">
+        <div className="viz-section-header">
+          <Layers size={13} />
+          DATA STRUCTURE VISUALIZATION
+        </div>
+        <div className="viz-section-body viz-ds-body">
+          {dsSections.length > 0
+            ? dsSections
+            : (
+              <div className="viz-empty viz-ds-empty">
+                <p>No data structures detected at this step.</p>
+                <p className="viz-ds-hint">
+                  Use variables named <code>stack</code>, <code>queue</code>, <code>arr</code>, etc.,
+                  or implement a class named <code>Stack</code> / <code>Queue</code> / <code>HashTable</code>.
+                </p>
+              </div>
             )
           }
-          if (role === 'queue') {
-            return (
-              <Section key={name} icon={AlignJustify} title={`Queue — ${name}`}>
-                <QueueViz heapObj={innerObj} prevHeapObj={prevInner} />
-              </Section>
-            )
-          }
-          if (role === 'stack') {
-            return (
-              <Section key={name} icon={List} title={`Stack — ${name}`}>
-                <StackViz heapObj={innerObj} prevHeapObj={prevInner} />
-              </Section>
-            )
-          }
-          return null
-        }
+        </div>
+      </div>
 
-        // ── B) bare dict: show as HashMap for all dicts ──────────────────
-        if (rawType === 'dict') {
-          // Skip if already claimed by graph detection
-          if (graphExcludeIds.has(heapId)) return null
-          return (
-            <Section key={name} icon={Database} title={`Map — ${name}`}>
-              <HashTableViz
-                heapObj={rawObj}
-                varName={name}
-                locals={locals}
-                prevHeapObj={prevRawObj}
-                heapState={heapState}
-                prevHeapState={prevHeapState}
-              />
-            </Section>
-          )
-        }
-
-        // ── C) bare list / tuple / deque ──────────────────────────────────
-        if (!rawObj.elements) return null
-
-        // matrix? (only lists/tuples can be matrices, not deques)
-        if (rawObj.is_matrix && rawObj.dimensions) {
-          const dims = rawObj.dimensions
-          if (dims.length === 3) {
-            return (
-              <Section key={name} icon={Layers} title={`3D Matrix — ${name}`}>
-                <Matrix3DViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} heapState={heapState} />
-              </Section>
-            )
-          }
-          if (dims.length === 2) {
-            return (
-              <Section key={name} icon={Grid3x3} title={`2D Matrix — ${name}`}>
-                <Matrix2DViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} heapState={heapState} matrixHeapId={heapId} />
-              </Section>
-            )
-          }
-        }
-
-        const role = detectListRole(name, rawObj)
-
-        if (role === 'stack') {
-          return (
-            <Section key={name} icon={List} title={`Stack — ${name}`}>
-              <StackViz heapObj={rawObj} prevHeapObj={prevRawObj} />
-            </Section>
-          )
-        }
-        if (role === 'queue') {
-          return (
-            <Section key={name} icon={AlignJustify} title={`Queue — ${name}`}>
-              <QueueViz heapObj={rawObj} prevHeapObj={prevRawObj} />
-            </Section>
-          )
-        }
-        return (
-          <Section key={name} icon={Grid3x3} title={`Array — ${name}`}>
-            <ArrayViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} />
-          </Section>
-        )
-      })}
-
-      {/* Variables table */}
+      {/* ── SECTION 3: Variables (Current Frame) (always visible) ── */}
       <Section icon={Database} title="Variables (Current Frame)">
         <Variables step={step} prevStep={prevStep} onHeapClick={onHeapClick} />
       </Section>
 
-      {/* Heap / memory (remaining objects) */}
-      <HeapSection
-        heapState={heapState}
-        prevHeapState={prevHeapState}
-        featuredIds={featuredIds}
-        locals={locals}
-        onHeapClick={onHeapClick}
-      />
-
-      {/* Console output */}
+      {/* ── SECTION 4: Console Output (always visible) ── */}
       <Section icon={Terminal} title="Console Output">
         <OutputSection />
       </Section>
+
     </div>
   )
 }

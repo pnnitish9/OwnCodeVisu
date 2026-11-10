@@ -1785,7 +1785,59 @@
 
 .heap-obj-body { padding: 8px 10px; }
 
-/* ---- Info and Warning Banners -------------------------------------- */
+/* ---- Permanent DS section wrapper --------------------------------- */
+.viz-section-ds > .viz-section-body {
+    padding: 0;              /* inner sections carry their own padding */
+}
+
+.viz-ds-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+/* DS body child sections lose their outer border radius so they tile cleanly */
+.viz-ds-body > .viz-section {
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+    border-top: none;
+    border-bottom: 1px solid var(--border);
+}
+
+.viz-ds-body > .viz-section:first-child {
+    border-top: none;
+}
+
+.viz-ds-body > .viz-section:last-child {
+    border-bottom: none;
+}
+
+/* DS empty state */
+.viz-ds-empty {
+    padding: 24px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.viz-ds-empty p { margin: 0 0 6px; }
+.viz-ds-empty p:last-child { margin: 0; }
+
+.viz-ds-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: .7;
+}
+
+.viz-ds-hint code {
+    font-family: var(--font-mono);
+    background: var(--bg-editor);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+/* ---- Info and Warning Banners (unchanged) -------------------------- */
 .viz-info-banner {
     display: flex;
     align-items: flex-start;
