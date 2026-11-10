@@ -185,10 +185,90 @@ function detectPointers(locals, arrayLen) {
  * append/pop operations implied) or queue (deque / queue variable name).
  */
 function detectListRole(varName, heapObj) {
-  const n = varName.toLowerCase()
-  if (n === 'stack' || n === 'st' || n === 's') return 'stack'
+  const n  = varName.toLowerCase()
+  const ht = heapObj?.type?.toLowerCase() || ''
+
+  // Name-based: exact match on well-known names
+  if (n === 'stack' || n === 'st') return 'stack'
   if (n === 'queue' || n === 'q' || n === 'deque' || n === 'dq') return 'queue'
+
+  // Type-based: a collections.deque is always a queue regardless of name
+  if (ht === 'deque') return 'queue'
+
+  // Name contains stack/queue as a substring (e.g. myStack, callQueue)
+  if (n.includes('stack')) return 'stack'
+  if (n.includes('queue') || n.includes('deque')) return 'queue'
+
   return 'array'
+}
+
+/**
+ * Given a heap object that is a class instance (type==='object'),
+ * look inside its attributes for an inner list/deque that holds the actual data.
+ * Returns { innerObj, role } or null.
+ */
+function extractDSFromInstance(instanceObj, heapState) {
+  if (!instanceObj || instanceObj.type !== 'object') return null
+
+  const className = (instanceObj.class || '').toLowerCase()
+  const isQueueClass = className.includes('queue')
+  const isStackClass = className.includes('stack')
+  const isHTClass    = className.includes('hash') || className.includes('table') || className.includes('map')
+
+  // HashTable: expose the dict attribute first
+  if (isHTClass) {
+    for (const attr of (instanceObj.attributes || [])) {
+      if (attr.type !== 'ref') continue
+      const inner = heapState[String(attr.heap_id)]
+      if (inner?.type === 'dict' && inner.entries != null) {
+        return { innerObj: inner, role: 'hashtable' }
+      }
+    }
+    // Fall through — maybe the HT stores its data in a list of lists (open addressing)
+  }
+
+  // Queue or Stack: look for a list/deque attribute
+  for (const attr of (instanceObj.attributes || [])) {
+    if (attr.type !== 'ref') continue
+    const inner = heapState[String(attr.heap_id)]
+    if (!inner || inner.elements == null) continue
+
+    const attrName = (attr.name || '').toLowerCase()
+    const innerType = (inner.type || '').toLowerCase()
+
+    // Build role from all available signals
+    let role = 'array'
+
+    if (isQueueClass || attrName.includes('queue') || attrName.includes('deque') || innerType === 'deque') {
+      role = 'queue'
+    } else if (isStackClass || attrName.includes('stack')) {
+      role = 'stack'
+    } else if (attrName === 'items' || attrName === 'data' || attrName === '_data' || attrName === '_items') {
+      // Generic container attribute names: infer from class name
+      if (isQueueClass) role = 'queue'
+      else if (isStackClass) role = 'stack'
+    }
+
+    if (role !== 'array') return { innerObj: inner, role }
+
+    // Last-chance: a deque attribute without a recognisable class name → queue
+    if (innerType === 'deque') return { innerObj: inner, role: 'queue' }
+  }
+
+  // Also check: if the class itself is a dict-like structure (HashMap without nested dict attr)
+  // Some implementations store k/v directly in the instance's dict
+  if (isHTClass) {
+    for (const attr of (instanceObj.attributes || [])) {
+      if (attr.type !== 'ref') continue
+      const inner = heapState[String(attr.heap_id)]
+      // list-of-lists: bucket array pattern  (self.table = [[], [], ...])
+      if (inner?.type === 'list' && inner.elements) {
+        return { innerObj: inner, role: 'hashtable' }
+      }
+    }
+  }
+
+  return null
 }
 
 /**
@@ -1142,52 +1222,322 @@ function StackSpaceViz({ callTree, currentStep, heapState, locals }) {
 }
 
 /* ================================================================
-   STACK VIZ  (vertical, top at top)
+   STACK VIZ — vertical, top element highlighted, PUSH/POP labels
    ================================================================ */
-function StackViz({ heapObj }) {
-  const els = (heapObj.elements || []).filter(e => e.type === 'value' || e.type === 'ref')
-  if (!els.length) return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>empty stack</div>
+function StackViz({ heapObj, prevHeapObj }) {
+  const els     = (heapObj?.elements  || []).filter(e => e.type === 'value' || e.type === 'ref')
+  const prevEls = (prevHeapObj?.elements || []).filter(e => e.type === 'value' || e.type === 'ref')
+
+  const op = els.length > prevEls.length ? 'push'
+           : els.length < prevEls.length ? 'pop'
+           : null
+
+  if (!els.length) {
+    return (
+      <div className="ds-empty-state">
+        <span className="ds-empty-icon">⬛</span>
+        <span>Stack is empty</span>
+      </div>
+    )
+  }
+
+  // Display newest on top
+  const displayEls = [...els].reverse()
 
   return (
-    <div>
-      <div className="stack-viz">
-        {els.map((el, i) => {
-          const isTop = i === els.length - 1
-          const val   = el.type === 'ref' ? `→H${el.heap_id}` : String(el.value ?? '')
+    <div className="ds-stack-wrap">
+      {op && (
+        <div className={`ds-op-badge ds-op-${op}`}>
+          {op === 'push' ? '↓ PUSH' : '↑ POP'}
+        </div>
+      )}
+      <div className="ds-stack-body">
+        {displayEls.map((el, ri) => {
+          const realIdx = els.length - 1 - ri
+          const isTop   = realIdx === els.length - 1
+          const isNew   = op === 'push' && isTop
+          const val     = el.type === 'ref' ? `ref#${el.heap_id}` : String(el.value ?? '')
           return (
-            <div key={`${i}-${val}`} className={`stack-item${isTop ? ' top' : ''}`}>
-              <span className="stack-item-label">{isTop ? 'TOP' : `[${i}]`}</span>
-              {val}
+            <div
+              key={`${realIdx}-${val}`}
+              className={[
+                'ds-stack-cell',
+                isTop ? 'ds-stack-top' : '',
+                isNew ? 'ds-anim-push' : '',
+              ].join(' ').trim()}
+            >
+              <span className="ds-cell-idx">[{realIdx}]</span>
+              <span className="ds-cell-val">{val}</span>
+              {isTop && <span className="ds-top-tag">TOP</span>}
             </div>
           )
         })}
       </div>
-      <div className="stack-base-label">▲ BOTTOM</div>
+      <div className="ds-stack-base">
+        <div className="ds-stack-base-line" />
+        <span className="ds-stack-base-label">BOTTOM · size&nbsp;{els.length}</span>
+      </div>
     </div>
   )
 }
 
 /* ================================================================
-   QUEUE VIZ  (horizontal, front=left)
+   QUEUE VIZ — horizontal, FRONT / REAR labels, ENQUEUE/DEQUEUE
    ================================================================ */
-function QueueViz({ heapObj }) {
-  const els = (heapObj.elements || []).filter(e => e.type === 'value' || e.type === 'ref')
-  if (!els.length) return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>empty queue</div>
+function QueueViz({ heapObj, prevHeapObj }) {
+  const els     = (heapObj?.elements  || []).filter(e => e.type === 'value' || e.type === 'ref')
+  const prevEls = (prevHeapObj?.elements || []).filter(e => e.type === 'value' || e.type === 'ref')
+
+  const op = els.length > prevEls.length ? 'enqueue'
+           : els.length < prevEls.length ? 'dequeue'
+           : null
+
+  if (!els.length) {
+    return (
+      <div className="ds-empty-state">
+        <span className="ds-empty-icon">⬛</span>
+        <span>Queue is empty</span>
+      </div>
+    )
+  }
 
   return (
-    <div className="queue-viz">
-      <div className="queue-end-label">FRONT →</div>
-      {els.map((el, i) => {
-        const isFront = i === 0
-        const isBack  = i === els.length - 1
-        const val     = el.type === 'ref' ? `→H${el.heap_id}` : String(el.value ?? '')
-        return (
-          <div key={`${i}-${val}`} className={`queue-item${isFront ? ' front' : isBack ? ' back' : ''}`}>
-            {val}
-          </div>
-        )
-      })}
-      <div className="queue-end-label">← BACK</div>
+    <div className="ds-queue-wrap">
+      {op && (
+        <div className={`ds-op-badge ds-op-${op}`}>
+          {op === 'enqueue' ? 'ENQUEUE →' : '← DEQUEUE'}
+        </div>
+      )}
+      <div className="ds-queue-layout">
+        <div className="ds-queue-pointer ds-queue-front">
+          <span className="ds-ptr-label">FRONT</span>
+          <span className="ds-ptr-arrow">↓</span>
+        </div>
+        <div className="ds-queue-cells">
+          {els.map((el, i) => {
+            const isFront = i === 0
+            const isRear  = i === els.length - 1
+            const isNew   = op === 'enqueue' && isRear
+            const val     = el.type === 'ref' ? `ref#${el.heap_id}` : String(el.value ?? '')
+            return (
+              <div
+                key={`${i}-${val}`}
+                className={[
+                  'ds-queue-cell',
+                  isFront ? 'ds-queue-front-cell' : '',
+                  isRear  ? 'ds-queue-rear-cell'  : '',
+                  isNew   ? 'ds-anim-enqueue'      : '',
+                ].join(' ').trim()}
+              >
+                <span className="ds-cell-val">{val}</span>
+                <span className="ds-cell-idx">[{i}]</span>
+              </div>
+            )
+          })}
+        </div>
+        <div className="ds-queue-pointer ds-queue-rear">
+          <span className="ds-ptr-arrow">↓</span>
+          <span className="ds-ptr-label">REAR</span>
+        </div>
+      </div>
+      <div className="ds-queue-info">size&nbsp;{els.length}</div>
+    </div>
+  )
+}
+
+/* ================================================================
+   HASHTABLE VIZ (bucket-array pattern: self.table = [[], [], ...])
+   Handles list-of-lists where each inner list is a bucket.
+   Also handles plain dict storage.
+   ================================================================ */
+function HashTableViz({ heapObj, varName, locals, prevHeapObj, heapState, prevHeapState, instanceObj }) {
+  // ── Detect storage pattern ────────────────────────────────────────
+  // Pattern A: heapObj is a dict with .entries (python dict / OrderedDict)
+  // Pattern B: heapObj is a list with .elements where each element is a ref to an inner list (bucket array)
+  // Pattern C: instanceObj is the class instance — read size + table attributes directly
+
+  const activeKey = useMemo(() => {
+    for (const [vname, val] of Object.entries(locals || {})) {
+      const n = vname.toLowerCase()
+      if (n === 'key' || n === 'k') return String(val?.value ?? val?.display ?? '').replace(/['"]/g, '')
+    }
+    return null
+  }, [locals])
+
+  // ── Pattern A: plain dict (entries array) ─────────────────────────
+  if (heapObj?.entries) {
+    const entries   = heapObj.entries || []
+    const prevEnts  = prevHeapObj?.entries || []
+
+    if (!entries.length) {
+      return (
+        <div className="ds-empty-state">
+          <span className="ds-empty-icon">⬛</span>
+          <span>Hash table is empty</span>
+        </div>
+      )
+    }
+
+    const prevKeySet  = new Set(prevEnts.map(e => e.key))
+    const newKeys     = new Set(entries.filter(e => !prevKeySet.has(e.key)).map(e => e.key))
+    const changedKeys = new Set(
+      entries.filter(e => {
+        const pv = prevEnts.find(p => p.key === e.key)
+        return pv && pv.value?.value !== e.value?.value
+      }).map(e => e.key)
+    )
+
+    // Simple bucket layout for dict
+    const BUCKETS = Math.max(entries.length, 4)
+    const buckets = Array.from({ length: BUCKETS }, () => [])
+    for (const e of entries) {
+      let h = 0
+      const ks = String(e.key || '').replace(/['"]/g, '')
+      for (let i = 0; i < ks.length; i++) h = (h * 31 + ks.charCodeAt(i)) >>> 0
+      buckets[h % BUCKETS].push(e)
+    }
+
+    return (
+      <div className="ds-ht-wrap">
+        <div className="ds-ht-table">
+          {buckets.map((bkt, idx) => (
+            <div key={idx} className="ds-ht-row">
+              <div className="ds-ht-idx">{idx}</div>
+              <div className="ds-ht-bucket">
+                {bkt.length === 0 ? (
+                  <span className="ds-ht-null">∅</span>
+                ) : bkt.map((e, ci) => {
+                  const rawKey = String(e.key || '').replace(/['"]/g, '')
+                  const isActive  = activeKey && rawKey === activeKey
+                  const isNew     = newKeys.has(e.key)
+                  const isChanged = changedKeys.has(e.key)
+                  const val = e.value?.type === 'ref' ? `ref#${e.value.heap_id}` : String(e.value?.value ?? '')
+                  return (
+                    <React.Fragment key={ci}>
+                      {ci > 0 && <span className="ds-ht-chain">→</span>}
+                      <div className={['ds-ht-entry', isActive ? 'ds-ht-active' : '', isNew ? 'ds-ht-new' : '', isChanged ? 'ds-ht-changed' : ''].join(' ').trim()}>
+                        <span className="ds-ht-key">{rawKey}</span>
+                        <span className="ds-ht-sep">:</span>
+                        <span className="ds-ht-val">{val}</span>
+                      </div>
+                    </React.Fragment>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="ds-ht-info">{entries.length} entries{activeKey && <span className="ds-ht-active-key"> · key="{activeKey}"</span>}</div>
+      </div>
+    )
+  }
+
+  // ── Pattern B: bucket array — list of lists ───────────────────────
+  // heapObj.elements = [{type:'ref', heap_id: <inner-list-id>}, ...]
+  // Each inner list = one bucket, containing items (usually [key, value] pairs or plain values)
+  if (heapObj?.elements && heapState) {
+    const bucketRefs = heapObj.elements.filter(e => e.type === 'ref' || e.type === 'value')
+
+    // Also read size from instanceObj attributes (self.size)
+    const sizeAttr = instanceObj?.attributes?.find(a => a.name === 'size' || a.name === 'capacity' || a.name === '_size')
+    const tableSize = sizeAttr?.value ? Number(sizeAttr.value) : bucketRefs.length
+
+    // Resolve each bucket ref → inner list of items
+    const resolvedBuckets = bucketRefs.map((bref, idx) => {
+      if (bref.type === 'ref') {
+        const bucket = heapState[String(bref.heap_id)]
+        if (!bucket?.elements) return { idx, items: [] }
+        // Each item in the bucket: either a plain value or a ref to [key, val] list
+        const items = bucket.elements.filter(e => e.type !== 'truncated').map(item => {
+          if (item.type === 'ref') {
+            const pair = heapState[String(item.heap_id)]
+            if (pair?.elements && pair.elements.length >= 2) {
+              const k = pair.elements[0]
+              const v = pair.elements[1]
+              return {
+                key: k.type === 'value' ? String(k.value ?? '').replace(/['"]/g, '') : `ref#${k.heap_id}`,
+                val: v.type === 'value' ? String(v.value ?? '') : `ref#${v.heap_id}`,
+              }
+            }
+            return { key: `ref#${item.heap_id}`, val: '' }
+          }
+          return { key: String(item.value ?? '').replace(/['"]/g, ''), val: '' }
+        })
+        return { idx, items }
+      }
+      return { idx, items: [] }
+    })
+
+    // Previous buckets for change detection
+    const prevBucketRefs  = prevHeapObj?.elements?.filter(e => e.type === 'ref') || []
+    const prevBucketItems = new Map()
+    prevBucketRefs.forEach((bref, idx) => {
+      if (bref.type === 'ref' && prevHeapState) {
+        const bucket = prevHeapState[String(bref.heap_id)]
+        const items  = (bucket?.elements || []).filter(e => e.type !== 'truncated').map(item => {
+          if (item.type === 'ref') {
+            const pair = prevHeapState[String(item.heap_id)]
+            if (pair?.elements?.length >= 2) {
+              return String(pair.elements[0]?.value ?? '').replace(/['"]/g, '')
+            }
+          }
+          return String(item.value ?? '').replace(/['"]/g, '')
+        })
+        prevBucketItems.set(idx, new Set(items))
+      }
+    })
+
+    const totalItems = resolvedBuckets.reduce((s, b) => s + b.items.length, 0)
+
+    return (
+      <div className="ds-ht-wrap">
+        <div className="ds-ht-table">
+          {resolvedBuckets.map(({ idx, items }) => {
+            const prevKeys   = prevBucketItems.get(idx) || new Set()
+            const isActive   = activeKey && items.some(it => it.key === activeKey)
+            return (
+              <div key={idx} className={`ds-ht-row${isActive ? ' ds-ht-row-active' : ''}`}>
+                <div className="ds-ht-idx">{idx}</div>
+                <div className="ds-ht-bucket">
+                  {items.length === 0 ? (
+                    <span className="ds-ht-null">∅</span>
+                  ) : items.map((it, ci) => {
+                    const isNew    = !prevKeys.has(it.key)
+                    const isItemActive = activeKey && it.key === activeKey
+                    return (
+                      <React.Fragment key={ci}>
+                        {ci > 0 && <span className="ds-ht-chain">→</span>}
+                        <div className={['ds-ht-entry', isItemActive ? 'ds-ht-active' : '', isNew ? 'ds-ht-new' : ''].join(' ').trim()}>
+                          {it.val !== '' ? (
+                            <>
+                              <span className="ds-ht-key">{it.key}</span>
+                              <span className="ds-ht-sep">:</span>
+                              <span className="ds-ht-val">{it.val}</span>
+                            </>
+                          ) : (
+                            <span className="ds-ht-key">{it.key}</span>
+                          )}
+                        </div>
+                      </React.Fragment>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div className="ds-ht-info">
+          {totalItems} items · {resolvedBuckets.length} buckets
+          {activeKey && <span className="ds-ht-active-key"> · key="{activeKey}"</span>}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="ds-empty-state">
+      <span className="ds-empty-icon">⬛</span>
+      <span>Hash table is empty</span>
     </div>
   )
 }
@@ -1691,8 +2041,9 @@ export default function Visualizer({ onHeapClick }) {
   // ---- Find matrices first to identify their row heap IDs ------------
   const matrixVars = Object.entries(locals).filter(([name, val]) => {
     if (name.startsWith('__')) return false
-    if (!val || val.type !== 'list' || val.heap_ref == null) return false
+    if (!val || val.heap_ref == null) return false
     const heapObj = heapState[String(val.heap_ref)]
+    // Only lists/tuples can be matrices (not deques or objects)
     return heapObj?.is_matrix && heapObj?.dimensions
   })
 
@@ -1709,20 +2060,42 @@ export default function Visualizer({ onHeapClick }) {
     }
   }
 
-  // ---- Find list/tuple variables to feature as smart diagrams --------
-  const listVars = Object.entries(locals).filter(([name, val]) => {
+  // ---- Find list/tuple/object variables to feature as smart diagrams --------
+  // Collect everything that might be a DS: lists, tuples, dicts, objects.
+  // IMPORTANT: val.type is the formatter type, which is the Python class name for
+  // class instances (e.g. "Queue", "Stack") and "deque" for collections.deque.
+  // We must look at the heap object's type, not val.type, to handle these correctly.
+  const dsVars = Object.entries(locals).filter(([name, val]) => {
     if (name.startsWith('__')) return false
-    if (!val || (val.type !== 'list' && val.type !== 'tuple') || val.heap_ref == null) return false
-    // Exclude matrix row references
+    if (!val || val.heap_ref == null) return false
+    // skip matrix rows
     if (matrixRowHeapIds.has(String(val.heap_ref))) return false
-    return true
+    // Look at heap object type for the ground truth
+    const heapObj = heapState[String(val.heap_ref)]
+    if (!heapObj) return false
+    const ht = heapObj.type
+    // list, tuple, deque: has .elements  → array/stack/queue candidates
+    // dict: has .entries                 → hashtable candidate
+    // object: class instance             → extract inner DS
+    return ht === 'list' || ht === 'tuple' || ht === 'deque' || ht === 'dict' || ht === 'object'
   })
-  
+
   const featuredIds = new Set([
-    ...listVars.map(([, v]) => String(v.heap_ref)),
-    ...matrixRowHeapIds,  // Exclude matrix rows from heap section
-    ...graphExcludeIds    // Exclude all graph-related heap objects
+    ...dsVars.map(([, v]) => String(v.heap_ref)),
+    ...matrixRowHeapIds,
+    ...graphExcludeIds,
   ])
+  // Also exclude inner objects extracted from class instances so they don't
+  // appear again in the generic HeapSection after being shown in their DS panel.
+  // We walk all ref attributes of each instance and add their heap IDs.
+  for (const [, val] of dsVars) {
+    const rawObj = heapState[String(val.heap_ref)]
+    if (rawObj?.type === 'object') {
+      for (const attr of (rawObj.attributes || [])) {
+        if (attr.type === 'ref') featuredIds.add(String(attr.heap_id))
+      }
+    }
+  }
 
   // ---- Detect recursion -----------------------------------------------
   const callTree = traceData.call_tree || []
@@ -1789,75 +2162,117 @@ export default function Visualizer({ onHeapClick }) {
         </Section>
       )}
 
-      {/* Smart array / stack / queue / matrix diagrams */}
-      {listVars.map(([name, val]) => {
-        const heapId  = String(val.heap_ref)
-        const heapObj = heapState[heapId]
-        if (!heapObj?.elements) return null
-        const prevObj = prevHeapState[heapId]
-        const role    = detectListRole(name, heapObj)
+      {/* Smart array / stack / queue / hashtable / matrix diagrams */}
+      {dsVars.map(([name, val]) => {
+        const heapId = String(val.heap_ref)
+        const rawObj = heapState[heapId]
+        if (!rawObj) return null
 
-        // Check if it's a matrix (2D or 3D array)
-        if (heapObj.is_matrix && heapObj.dimensions) {
-          const dims = heapObj.dimensions
-          
-          // 3D Matrix
-          if (dims.length === 3) {
+        const prevRawObj = prevHeapState[heapId]
+        const rawType = rawObj.type  // 'list'|'tuple'|'deque'|'dict'|'object'
+
+        // ── A) class instance: extract inner DS ──────────────────────────
+        if (rawType === 'object') {
+          const extracted = extractDSFromInstance(rawObj, heapState)
+          if (!extracted) return null
+          const { innerObj, role } = extracted
+          const prevExtracted = prevRawObj ? extractDSFromInstance(prevRawObj, prevHeapState) : null
+          const prevInner = prevExtracted?.innerObj || null
+
+          if (role === 'hashtable') {
             return (
-              <Section key={name} icon={Layers} title={`3D Matrix — ${name}`}>
-                <Matrix3DViz
-                  heapObj={heapObj}
+              <Section key={name} icon={Database} title={`Hash Table — ${name}`}>
+                <HashTableViz
+                  heapObj={innerObj}
                   varName={name}
                   locals={locals}
-                  prevHeapObj={prevObj}
-                  onHeapClick={onHeapClick}
+                  prevHeapObj={prevInner}
                   heapState={heapState}
+                  prevHeapState={prevHeapState}
+                  instanceObj={rawObj}
                 />
               </Section>
             )
           }
-          
-          // 2D Matrix
+          if (role === 'queue') {
+            return (
+              <Section key={name} icon={AlignJustify} title={`Queue — ${name}`}>
+                <QueueViz heapObj={innerObj} prevHeapObj={prevInner} />
+              </Section>
+            )
+          }
+          if (role === 'stack') {
+            return (
+              <Section key={name} icon={List} title={`Stack — ${name}`}>
+                <StackViz heapObj={innerObj} prevHeapObj={prevInner} />
+              </Section>
+            )
+          }
+          return null
+        }
+
+        // ── B) bare dict: hashtable if name matches ───────────────────────
+        if (rawType === 'dict') {
+          const n = name.toLowerCase()
+          const isHT = n.includes('hash') || n.includes('table') || n.includes('map') || n === 'ht' || n === 'hm'
+          if (isHT) {
+            return (
+              <Section key={name} icon={Database} title={`Hash Table — ${name}`}>
+                <HashTableViz
+                  heapObj={rawObj}
+                  varName={name}
+                  locals={locals}
+                  prevHeapObj={prevRawObj}
+                  heapState={heapState}
+                  prevHeapState={prevHeapState}
+                />
+              </Section>
+            )
+          }
+          return null
+        }
+
+        // ── C) bare list / tuple / deque ──────────────────────────────────
+        if (!rawObj.elements) return null
+
+        // matrix? (only lists/tuples can be matrices, not deques)
+        if (rawObj.is_matrix && rawObj.dimensions) {
+          const dims = rawObj.dimensions
+          if (dims.length === 3) {
+            return (
+              <Section key={name} icon={Layers} title={`3D Matrix — ${name}`}>
+                <Matrix3DViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} heapState={heapState} />
+              </Section>
+            )
+          }
           if (dims.length === 2) {
             return (
               <Section key={name} icon={Grid3x3} title={`2D Matrix — ${name}`}>
-                <Matrix2DViz
-                  heapObj={heapObj}
-                  varName={name}
-                  locals={locals}
-                  prevHeapObj={prevObj}
-                  onHeapClick={onHeapClick}
-                  heapState={heapState}
-                  matrixHeapId={heapId}
-                />
+                <Matrix2DViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} heapState={heapState} matrixHeapId={heapId} />
               </Section>
             )
           }
         }
 
+        const role = detectListRole(name, rawObj)
+
         if (role === 'stack') {
           return (
             <Section key={name} icon={List} title={`Stack — ${name}`}>
-              <StackViz heapObj={heapObj} />
+              <StackViz heapObj={rawObj} prevHeapObj={prevRawObj} />
             </Section>
           )
         }
         if (role === 'queue') {
           return (
             <Section key={name} icon={AlignJustify} title={`Queue — ${name}`}>
-              <QueueViz heapObj={heapObj} />
+              <QueueViz heapObj={rawObj} prevHeapObj={prevRawObj} />
             </Section>
           )
         }
         return (
           <Section key={name} icon={Grid3x3} title={`Array — ${name}`}>
-            <ArrayViz
-              heapObj={heapObj}
-              varName={name}
-              locals={locals}
-              prevHeapObj={prevObj}
-              onHeapClick={onHeapClick}
-            />
+            <ArrayViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} />
           </Section>
         )
       })}
