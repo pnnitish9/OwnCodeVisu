@@ -1385,7 +1385,54 @@ function QueueViz({ heapObj, prevHeapObj }) {
    Handles list-of-lists where each inner list is a bucket.
    Also handles plain dict storage.
    ================================================================ */
-function HashTableViz({ heapObj, varName, locals, prevHeapObj, heapState, prevHeapState, instanceObj }) {
+
+/**
+ * Parse a dict display string like "{'aet': ['eat', 'tea'], 'ant': ['tan']}"
+ * into an array of {key, valStr} pairs when the heap is stale.
+ * This is a best-effort parser for the common cases; it falls back to
+ * returning an empty array if the string is too complex.
+ */
+function parseDictDisplay(display) {
+  if (!display || typeof display !== 'string') return null
+  const s = display.trim()
+  if (!s.startsWith('{') || !s.endsWith('}')) return null
+  if (s === '{}') return []
+
+  const result = []
+  // Strip outer braces
+  const inner = s.slice(1, -1).trim()
+  if (!inner) return []
+
+  // Simple state-machine tokeniser: split on ", 'key': " or ', "key": '
+  // while respecting nested brackets
+  let depth = 0
+  let start = 0
+  const pairs = []
+
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i]
+    if (ch === '[' || ch === '{' || ch === '(') depth++
+    else if (ch === ']' || ch === '}' || ch === ')') depth--
+    else if (ch === ',' && depth === 0) {
+      pairs.push(inner.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  pairs.push(inner.slice(start).trim())
+
+  for (const pair of pairs) {
+    // Match:  'key': value  or  "key": value  or  key: value
+    const colonIdx = pair.indexOf(': ')
+    if (colonIdx === -1) continue
+    const keyRaw = pair.slice(0, colonIdx).trim().replace(/^['"]|['"]$/g, '')
+    const valRaw = pair.slice(colonIdx + 2).trim()
+    if (keyRaw) result.push({ key: keyRaw, valStr: valRaw })
+  }
+
+  return result.length ? result : null
+}
+
+function HashTableViz({ heapObj, varName, locals, prevHeapObj, heapState, prevHeapState, instanceObj, localVal }) {
   // ── Detect storage pattern ────────────────────────────────────────
   // Pattern A: heapObj is a dict with .entries (python dict / OrderedDict)
   // Pattern B: heapObj is a list with .elements where each element is a ref to an inner list (bucket array)
@@ -1400,8 +1447,25 @@ function HashTableViz({ heapObj, varName, locals, prevHeapObj, heapState, prevHe
   }, [locals])
 
   // ── Pattern A: plain dict (entries array) ─────────────────────────
-  if (heapObj?.entries) {
-    const entries   = heapObj.entries || []
+  if (heapObj?.entries !== undefined || localVal) {
+    // ALWAYS build entries from localVal.display first — it is regenerated
+    // every step by the tracer and is always correct.  The heap entries
+    // may lag behind due to smart snapshots on the deployed server.
+    const displayStr = localVal?.display ?? localVal?.preview ?? ''
+    const parsedFromDisplay = parseDictDisplay(displayStr)
+
+    // Build the canonical entries list: prefer display-parsed data, fall back to heap.
+    let entries
+    if (parsedFromDisplay && parsedFromDisplay.length > 0) {
+      entries = parsedFromDisplay.map(({ key, valStr }) => ({
+        key: `'${key}'`,
+        value: { type: 'value', value: valStr },
+        _synthetic: true,
+      }))
+    } else {
+      entries = heapObj?.entries || []
+    }
+
     const prevEnts  = prevHeapObj?.entries || []
 
     if (!entries.length) {
@@ -1429,16 +1493,21 @@ function HashTableViz({ heapObj, varName, locals, prevHeapObj, heapState, prevHe
     // Helper: resolve a value entry to a display string
     const resolveVal = (vEntry) => {
       if (!vEntry) return '—'
+      if (vEntry._synthetic) {
+        // Already a formatted display string — clean surrounding quotes only
+        const raw = String(vEntry.value?.value ?? '')
+        // Strip outer single quotes from plain string values, keep list/dict intact
+        return raw.replace(/^'(.*)'$/, '$1')
+      }
       if (vEntry.type === 'ref') {
         const inner = heapState?.[String(vEntry.heap_id)]
         if (!inner) return `ref#${vEntry.heap_id}`
         if (inner.type === 'list' || inner.type === 'deque' || inner.type === 'tuple') {
-          // Show inline preview of the list
           const items = (inner.elements || [])
             .filter(el => el.type === 'value')
-            .slice(0, 5)
+            .slice(0, 8)
             .map(el => String(el.value ?? '').replace(/^['"]|['"]$/g, ''))
-          const suffix = (inner.elements || []).length > 5 ? ', …' : ''
+          const suffix = (inner.elements || []).length > 8 ? ', …' : ''
           return `[${items.join(', ')}${suffix}]`
         }
         if (inner.type === 'dict') return `{…${inner.length ?? ''}}`
@@ -1452,7 +1521,7 @@ function HashTableViz({ heapObj, varName, locals, prevHeapObj, heapState, prevHe
       <div className="ds-ht-wrap">
         <div className="ds-ht-table">
           {entries.map((e, i) => {
-            const rawKey   = String(e.key || '').replace(/['"]/g, '')
+            const rawKey    = String(e.key || '').replace(/['"]/g, '')
             const isActive  = activeKey && rawKey === activeKey
             const isNew     = newKeys.has(rawKey)
             const isChanged = changedKeys.has(rawKey)
@@ -2217,7 +2286,7 @@ export default function Visualizer({ onHeapClick }) {
       if (role === 'hashtable') {
         dsSections.push(
           <Section key={name} icon={Database} title={`Hash Table — ${name}`}>
-            <HashTableViz heapObj={innerObj} varName={name} locals={locals} prevHeapObj={prevInner} heapState={heapState} prevHeapState={prevHeapState} instanceObj={rawObj} />
+            <HashTableViz heapObj={innerObj} varName={name} locals={locals} prevHeapObj={prevInner} heapState={heapState} prevHeapState={prevHeapState} instanceObj={rawObj} localVal={val} />
           </Section>
         )
       } else if (role === 'queue') {
@@ -2241,7 +2310,7 @@ export default function Visualizer({ onHeapClick }) {
       if (graphExcludeIds.has(heapId)) continue
       dsSections.push(
         <Section key={name} icon={Database} title={`Map — ${name}`}>
-          <HashTableViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} heapState={heapState} prevHeapState={prevHeapState} />
+          <HashTableViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} heapState={heapState} prevHeapState={prevHeapState} localVal={val} />
         </Section>
       )
       continue
@@ -2283,6 +2352,13 @@ export default function Visualizer({ onHeapClick }) {
         </Section>
       )
     } else {
+      // Skip arrays where every element is a heap ref with no scalar values —
+      // these are list-of-lists / list-of-objects that produce meaningless "→N" boxes.
+      const elements = rawObj.elements || []
+      const scalarCount = elements.filter(e => e.type === 'value').length
+      const refCount    = elements.filter(e => e.type === 'ref').length
+      if (elements.length > 0 && scalarCount === 0 && refCount === elements.length) continue
+
       dsSections.push(
         <Section key={name} icon={Grid3x3} title={`Array — ${name}`}>
           <ArrayViz heapObj={rawObj} varName={name} locals={locals} prevHeapObj={prevRawObj} onHeapClick={onHeapClick} />
