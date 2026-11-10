@@ -1250,16 +1250,16 @@
     display: flex;
     align-items: stretch;
     gap: 0;
-    min-height: 36px;
+    min-height: 34px;
 }
 
 .ds-ht-idx {
     width: 32px;
-    min-height: 36px;
+    min-height: 34px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     color: var(--text-muted);
     background: var(--bg-primary);
@@ -1274,12 +1274,13 @@
     align-items: center;
     flex-wrap: wrap;
     gap: 4px;
-    padding: 4px 8px;
+    padding: 4px 10px;
     background: var(--bg-editor);
     border: 1px solid var(--border);
     border-left: none;
     border-radius: 0 4px 4px 0;
-    min-height: 36px;
+    min-height: 34px;
+    overflow: hidden;
 }
 
 .ds-ht-empty {
@@ -1294,7 +1295,7 @@
     color: var(--text-muted);
     font-size: 13px;
     padding: 2px 6px;
-    opacity: .5;
+    opacity: .45;
 }
 
 .ds-ht-chain-arrow,
@@ -1314,13 +1315,15 @@
 .ds-ht-entry {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
+    gap: 5px;
+    padding: 4px 10px;
     background: var(--bg-card);
     border: 1.5px solid var(--border-light);
     border-radius: 4px;
     transition: background 200ms, border-color 200ms;
     animation: ds-ht-appear 300ms ease;
+    max-width: 100%;
+    overflow: hidden;
 }
 
 @keyframes ds-ht-appear {
@@ -1332,9 +1335,27 @@
 .ds-ht-entry.ds-ht-new     { background: var(--success-bg);  border-color: var(--success); animation: ds-ht-appear 350ms ease; }
 .ds-ht-entry.ds-ht-changed { background: var(--warning-bg);  border-color: var(--warning); }
 
-.ds-ht-key  { color: var(--accent);       font-weight: 600; }
-.ds-ht-sep  { color: var(--text-muted);   margin: 0 2px; }
-.ds-ht-val  { color: var(--text-primary); }
+.ds-ht-key {
+    color: var(--accent);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 120px;
+}
+.ds-ht-sep  {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    margin: 0 1px;
+    font-weight: 400;
+}
+.ds-ht-val  {
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
 
 .ds-ht-info {
     text-align: center;

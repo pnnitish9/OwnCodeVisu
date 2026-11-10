@@ -60,29 +60,45 @@ export async function postTrace(apiUrl, language, code, userInput, limits = null
 /**
  * Reconstruct full heap snapshots from differential snapshots.
  * Smart snapshots store references to previous full snapshots to save memory.
+ * Uses a proper per-step deep copy so mutations at later steps don't corrupt earlier ones.
  */
 export function reconstructHeapSnapshots(traceData) {
   if (!traceData?.smart_snapshots_enabled) {
-    return traceData // No reconstruction needed
+    return traceData
   }
-  
+
   const steps = traceData.steps
   let lastFullHeap = {}
-  
-  // Process each step and reconstruct heap state
+
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i]
-    
-    if (step.heap_state && typeof step.heap_state === 'object') {
-      if (step.heap_state._snapshot_ref !== undefined) {
-        // This is a reference - reuse the last full snapshot
-        step.heap_state = { ...lastFullHeap }
-      } else {
-        // This is a full snapshot - cache it
-        lastFullHeap = { ...step.heap_state }
+    if (!step.heap_state || typeof step.heap_state !== 'object') continue
+
+    if (step.heap_state._snapshot_ref !== undefined) {
+      // Differential step — restore from last full snapshot.
+      // Deep-copy each top-level object so mutations in later steps
+      // don't retroactively corrupt this step's view.
+      const restored = {}
+      for (const [id, obj] of Object.entries(lastFullHeap)) {
+        restored[id] = { ...obj }
+        // Also shallow-copy arrays inside the object so .entries / .elements
+        // additions don't mutate the saved snapshot.
+        if (Array.isArray(obj.entries))  restored[id].entries  = [...obj.entries]
+        if (Array.isArray(obj.elements)) restored[id].elements = [...obj.elements]
+        if (Array.isArray(obj.attributes)) restored[id].attributes = [...obj.attributes]
+      }
+      step.heap_state = restored
+    } else {
+      // Full snapshot — cache a copy keyed by object id.
+      lastFullHeap = {}
+      for (const [id, obj] of Object.entries(step.heap_state)) {
+        lastFullHeap[id] = { ...obj }
+        if (Array.isArray(obj.entries))    lastFullHeap[id].entries    = [...obj.entries]
+        if (Array.isArray(obj.elements))   lastFullHeap[id].elements   = [...obj.elements]
+        if (Array.isArray(obj.attributes)) lastFullHeap[id].attributes = [...obj.attributes]
       }
     }
   }
-  
+
   return traceData
 }

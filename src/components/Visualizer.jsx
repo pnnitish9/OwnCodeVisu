@@ -273,32 +273,67 @@ function extractDSFromInstance(instanceObj, heapState) {
 
 /**
  * Detect graph: a dict whose values are lists of nodes.
+ * Uses strict heuristics to avoid false-positives on defaultdict/Counter/groupBy dicts.
  * Returns { adj: adjacency map, excludeIds: Set of heap IDs to exclude from heap section } or null.
  */
 function detectGraph(heapState, locals) {
-  // Look for a dict variable — adjacency list
-  for (const [, val] of Object.entries(locals)) {
-    if (val?.type !== 'dict' || val.heap_ref == null) continue
+  for (const [varName, val] of Object.entries(locals)) {
+    // Only look at variables whose heap object is a dict
+    if (val?.heap_ref == null) continue
     const heapObj = heapState[String(val.heap_ref)]
-    if (!heapObj?.entries) continue
-    // Check if all values are lists
-    const allListVals = heapObj.entries.every(e => {
+    if (!heapObj || heapObj.type !== 'dict' || !heapObj.entries) continue
+
+    const entries = heapObj.entries
+    if (entries.length < 2) continue
+
+    // All values must be list/tuple refs
+    const allListVals = entries.every(e => {
       if (e.value?.type === 'ref') {
         const inner = heapState[String(e.value.heap_id)]
         return inner?.type === 'list' || inner?.type === 'tuple'
       }
       return false
     })
-    if (allListVals && heapObj.entries.length >= 2) {
-      // Build adjacency map and collect all related heap IDs
+    if (!allListVals) continue
+
+    // ── Strict graph heuristics ──────────────────────────────────────
+    // 1. Variable name must suggest a graph (adj, graph, edges, neighbors, g)
+    const vn = varName.toLowerCase()
+    const nameIsGraph = vn === 'adj' || vn === 'graph' || vn === 'g' ||
+                        vn.includes('adj') || vn.includes('graph') || vn.includes('neighbor') || vn.includes('edge')
+
+    // 2. Keys must look like node identifiers (integers or very short strings ≤3 chars,
+    //    not arbitrary strings like 'ant', 'eat' which are typical groupBy keys)
+    const keysLookLikeNodes = entries.every(e => {
+      const rawKey = String(e.key || '').replace(/['"]/g, '')
+      // Accept integers or single characters
+      if (/^\d+$/.test(rawKey)) return true
+      if (rawKey.length === 1) return true
+      return false
+    })
+
+    // 3. The inner lists should contain things that look like node refs (not long strings)
+    const innerValuesLookLikeNodes = entries.every(e => {
+      if (e.value?.type !== 'ref') return false
+      const inner = heapState[String(e.value.heap_id)]
+      if (!inner?.elements) return true  // empty list is fine
+      return inner.elements.every(el => {
+        if (el.type !== 'value') return true
+        const v = String(el.value ?? '').replace(/['"]/g, '')
+        // Accept integers or single characters as neighbor nodes
+        return /^\d+$/.test(v) || v.length <= 1
+      })
+    })
+
+    // Only treat as graph if name signals it OR both key and value heuristics pass
+    if (nameIsGraph || (keysLookLikeNodes && innerValuesLookLikeNodes)) {
       const adj = {}
-      const excludeIds = new Set([String(val.heap_ref)]) // Exclude the dict itself
-      
-      for (const e of heapObj.entries) {
+      const excludeIds = new Set([String(val.heap_ref)])
+
+      for (const e of entries) {
         const key = e.key?.replace(/['"]/g, '')
         const listHeapId = String(e.value?.heap_id)
-        excludeIds.add(listHeapId) // Exclude the adjacency lists
-        
+        excludeIds.add(listHeapId)
         const inner = heapState[listHeapId]
         adj[key] = (inner?.elements || [])
           .filter(el => el.type === 'value')
@@ -1373,61 +1408,73 @@ function HashTableViz({ heapObj, varName, locals, prevHeapObj, heapState, prevHe
       return (
         <div className="ds-empty-state">
           <span className="ds-empty-icon">⬛</span>
-          <span>Hash table is empty</span>
+          <span>Map is empty</span>
         </div>
       )
     }
 
-    const prevKeySet  = new Set(prevEnts.map(e => e.key))
-    const newKeys     = new Set(entries.filter(e => !prevKeySet.has(e.key)).map(e => e.key))
+    const prevKeySet  = new Set(prevEnts.map(e => String(e.key || '').replace(/['"]/g, '')))
+    const newKeys     = new Set(
+      entries
+        .filter(e => !prevKeySet.has(String(e.key || '').replace(/['"]/g, '')))
+        .map(e => String(e.key || '').replace(/['"]/g, ''))
+    )
     const changedKeys = new Set(
       entries.filter(e => {
         const pv = prevEnts.find(p => p.key === e.key)
         return pv && pv.value?.value !== e.value?.value
-      }).map(e => e.key)
+      }).map(e => String(e.key || '').replace(/['"]/g, ''))
     )
 
-    // Simple bucket layout for dict
-    const BUCKETS = Math.max(entries.length, 4)
-    const buckets = Array.from({ length: BUCKETS }, () => [])
-    for (const e of entries) {
-      let h = 0
-      const ks = String(e.key || '').replace(/['"]/g, '')
-      for (let i = 0; i < ks.length; i++) h = (h * 31 + ks.charCodeAt(i)) >>> 0
-      buckets[h % BUCKETS].push(e)
+    // Helper: resolve a value entry to a display string
+    const resolveVal = (vEntry) => {
+      if (!vEntry) return '—'
+      if (vEntry.type === 'ref') {
+        const inner = heapState?.[String(vEntry.heap_id)]
+        if (!inner) return `ref#${vEntry.heap_id}`
+        if (inner.type === 'list' || inner.type === 'deque' || inner.type === 'tuple') {
+          // Show inline preview of the list
+          const items = (inner.elements || [])
+            .filter(el => el.type === 'value')
+            .slice(0, 5)
+            .map(el => String(el.value ?? '').replace(/^['"]|['"]$/g, ''))
+          const suffix = (inner.elements || []).length > 5 ? ', …' : ''
+          return `[${items.join(', ')}${suffix}]`
+        }
+        if (inner.type === 'dict') return `{…${inner.length ?? ''}}`
+        if (inner.label) return inner.label
+        return `ref#${vEntry.heap_id}`
+      }
+      return String(vEntry.value ?? '').replace(/^['"]|['"]$/g, '')
     }
 
     return (
       <div className="ds-ht-wrap">
         <div className="ds-ht-table">
-          {buckets.map((bkt, idx) => (
-            <div key={idx} className="ds-ht-row">
-              <div className="ds-ht-idx">{idx}</div>
-              <div className="ds-ht-bucket">
-                {bkt.length === 0 ? (
-                  <span className="ds-ht-null">∅</span>
-                ) : bkt.map((e, ci) => {
-                  const rawKey = String(e.key || '').replace(/['"]/g, '')
-                  const isActive  = activeKey && rawKey === activeKey
-                  const isNew     = newKeys.has(e.key)
-                  const isChanged = changedKeys.has(e.key)
-                  const val = e.value?.type === 'ref' ? `ref#${e.value.heap_id}` : String(e.value?.value ?? '')
-                  return (
-                    <React.Fragment key={ci}>
-                      {ci > 0 && <span className="ds-ht-chain">→</span>}
-                      <div className={['ds-ht-entry', isActive ? 'ds-ht-active' : '', isNew ? 'ds-ht-new' : '', isChanged ? 'ds-ht-changed' : ''].join(' ').trim()}>
-                        <span className="ds-ht-key">{rawKey}</span>
-                        <span className="ds-ht-sep">:</span>
-                        <span className="ds-ht-val">{val}</span>
-                      </div>
-                    </React.Fragment>
-                  )
-                })}
+          {entries.map((e, i) => {
+            const rawKey   = String(e.key || '').replace(/['"]/g, '')
+            const isActive  = activeKey && rawKey === activeKey
+            const isNew     = newKeys.has(rawKey)
+            const isChanged = changedKeys.has(rawKey)
+            const valStr    = resolveVal(e.value)
+            return (
+              <div key={i} className="ds-ht-row">
+                <div className="ds-ht-idx">{i}</div>
+                <div className="ds-ht-bucket">
+                  <div className={['ds-ht-entry', isActive ? 'ds-ht-active' : '', isNew ? 'ds-ht-new' : '', isChanged ? 'ds-ht-changed' : ''].join(' ').trim()}>
+                    <span className="ds-ht-key">{rawKey}</span>
+                    <span className="ds-ht-sep">→</span>
+                    <span className="ds-ht-val">{valStr}</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
-        <div className="ds-ht-info">{entries.length} entries{activeKey && <span className="ds-ht-active-key"> · key="{activeKey}"</span>}</div>
+        <div className="ds-ht-info">
+          {entries.length} entries
+          {activeKey && <span className="ds-ht-active-key"> · key="{activeKey}"</span>}
+        </div>
       </div>
     )
   }
@@ -2211,25 +2258,22 @@ export default function Visualizer({ onHeapClick }) {
           return null
         }
 
-        // ── B) bare dict: hashtable if name matches ───────────────────────
+        // ── B) bare dict: show as HashMap for all dicts ──────────────────
         if (rawType === 'dict') {
-          const n = name.toLowerCase()
-          const isHT = n.includes('hash') || n.includes('table') || n.includes('map') || n === 'ht' || n === 'hm'
-          if (isHT) {
-            return (
-              <Section key={name} icon={Database} title={`Hash Table — ${name}`}>
-                <HashTableViz
-                  heapObj={rawObj}
-                  varName={name}
-                  locals={locals}
-                  prevHeapObj={prevRawObj}
-                  heapState={heapState}
-                  prevHeapState={prevHeapState}
-                />
-              </Section>
-            )
-          }
-          return null
+          // Skip if already claimed by graph detection
+          if (graphExcludeIds.has(heapId)) return null
+          return (
+            <Section key={name} icon={Database} title={`Map — ${name}`}>
+              <HashTableViz
+                heapObj={rawObj}
+                varName={name}
+                locals={locals}
+                prevHeapObj={prevRawObj}
+                heapState={heapState}
+                prevHeapState={prevHeapState}
+              />
+            </Section>
+          )
         }
 
         // ── C) bare list / tuple / deque ──────────────────────────────────
